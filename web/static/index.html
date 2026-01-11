@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dance Loop Gen — Visual Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Sidebar: Configuration -->
+        <aside class="sidebar glass">
+            <div class="sidebar-header">
+                <div class="logo">💃 Dance<span>Loop</span></div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h3>Character Customization</h3>
+                    <div class="form-group">
+                        <label for="leader-outfit">Leader Outfit</label>
+                        <textarea id="leader-outfit" placeholder="Describe leader's attire..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="follower-outfit">Follower Outfit</label>
+                        <textarea id="follower-outfit" placeholder="Describe follower's attire..."></textarea>
+                    </div>
+                </div>
+
+                <div class="nav-section">
+                    <h3>Environment</h3>
+                    <div class="form-group">
+                        <label for="setting-desc">Setting / Location</label>
+                        <input type="text" id="setting-desc" placeholder="e.g. A moonlit terrace in Marbella">
+                    </div>
+                </div>
+
+                <div class="nav-section">
+                    <h3>Visual Variety</h3>
+                    <div class="form-group">
+                        <div class="label-with-value">
+                            <label for="scene-variety">Scene Variety</label>
+                            <span id="variety-value">5</span>
+                        </div>
+                        <input type="range" id="scene-variety" min="0" max="10" step="1" value="5">
+                    </div>
+                </div>
+
+                <div class="nav-section">
+                    <h3>Reference Poses</h3>
+                    <div id="reference-pose-grid" class="pose-grid">
+                        <!-- Poses populated by JS -->
+                    </div>
+                </div>
+            </nav>
+
+            <div class="sidebar-footer">
+                <button id="save-config" class="btn btn-secondary"
+                    aria-label="Save character and environment configuration">Save Configuration</button>
+            </div>
+        </aside>
+
+        <!-- Main Content: Generator & Results -->
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="mode-toggle">
+                    <button id="mode-single" class="tab-btn active">Single Video</button>
+                    <button id="mode-batch" class="tab-btn">Batch Processing</button>
+                </div>
+                <div class="header-actions">
+                    <button id="btn-generate" class="btn btn-primary btn-glow"
+                        aria-label="Start AI generation pipeline">Start Generation</button>
+                </div>
+            </header>
+
+            <section id="generator-stage" class="stage-view">
+                <!-- Welcome / Idle View -->
+                <div id="view-idle" class="view">
+                    <div class="welcome-card glass">
+                        <h1>Ready to Create Magic?</h1>
+                        <p>Configure your dancers and setting on the left, then click generate to start the AI pipeline.
+                        </p>
+                        <div class="hero-icon">✨</div>
+                    </div>
+                </div>
+
+                <!-- Active Progress View -->
+                <div id="view-progress" class="view hidden">
+                    <div class="progress-container">
+                        <div class="pipeline-visual">
+                            <div class="stage-node" data-stage="Planning">
+                                <div class="node-icon">📝</div>
+                                <span>Plan</span>
+                            </div>
+                            <div class="connector"></div>
+                            <div class="stage-node" data-stage="Generating Assets">
+                                <div class="node-icon">🎨</div>
+                                <span>Assets</span>
+                            </div>
+                            <div class="connector"></div>
+                            <div class="stage-node" data-stage="Creating Veo">
+                                <div class="node-icon">🎬</div>
+                                <span>Veo</span>
+                            </div>
+                            <div class="connector"></div>
+                            <div class="stage-node" data-stage="Generating SEO">
+                                <div class="node-icon">📈</div>
+                                <span>SEO</span>
+                            </div>
+                        </div>
+
+                        <div class="progress-details glass">
+                            <div class="progress-header">
+                                <h2 id="progress-status">Initializing...</h2>
+                                <span id="progress-percent">0%</span>
+                            </div>
+                            <div class="progress-bar-bg">
+                                <div id="progress-bar-fill" class="progress-bar-fill"></div>
+                            </div>
+                            <div id="log-terminal" class="terminal">
+                                <!-- Logs appear here -->
+                            </div>
+                        </div>
+
+                        <div class="keyframe-streaming-grid">
+                            <div class="stream-card glass" data-scene="A">
+                                <div class="placeholder-img">Keyframe A</div>
+                                <img id="stream-img-a" class="hidden">
+                            </div>
+                            <div class="stream-card glass" data-scene="B">
+                                <div class="placeholder-img">Keyframe B</div>
+                                <img id="stream-img-b" class="hidden">
+                            </div>
+                            <div class="stream-card glass" data-scene="C">
+                                <div class="placeholder-img">Keyframe C</div>
+                                <img id="stream-img-c" class="hidden">
+                            </div>
+                            <div class="stream-card glass" data-scene="D">
+                                <div class="placeholder-img">Keyframe D</div>
+                                <img id="stream-img-d" class="hidden">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Complete Results View -->
+                <div id="view-results" class="view hidden">
+                    <div class="results-layout">
+                        <div class="results-left">
+                            <div class="result-header">
+                                <h1 id="result-title">Generation Title</h1>
+                                <button id="btn-back-to-gen" class="btn btn-text">← Back to Generator</button>
+                            </div>
+
+                            <div class="asset-viewer glass">
+                                <div class="main-preview">
+                                    <img id="main-result-img" src="" alt="Main Preview">
+                                </div>
+                                <div class="preview-thumbnails" id="result-thumbnails">
+                                    <!-- Keyframes A-D -->
+                                </div>
+                            </div>
+
+                            <div class="metadata-section glass">
+                                <h3>SEO Metadata</h3>
+                                <div class="metadata-grid" id="metadata-display">
+                                    <!-- Dynamic content -->
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="results-right">
+                            <div class="scene-list glass">
+                                <h3>Scene Breakdown</h3>
+                                <div id="scene-cards-container">
+                                    <!-- Scene cards -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Notification system -->
+    <div id="toast-container"></div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

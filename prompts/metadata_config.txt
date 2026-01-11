@@ -1,0 +1,10 @@
+# Metadata Configuration
+
+# Language for metadata (default: English)
+language: Spanish
+
+# Target keywords (comma-separated, leave empty for AI to decide)
+target_keywords: bachata, bachata romantica, bachata dance, amor, bachata vieja
+
+# Path to SEO research spreadsheet (any format - sent raw to AI)
+spreadsheet_path:

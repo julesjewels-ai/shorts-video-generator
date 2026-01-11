@@ -1,0 +1,13 @@
+Change the pose to: {pose_description}
+
+SCENE VARIATION:
+{variety_instruction}
+
+CRITICAL CONSISTENCY REQUIREMENTS:
+- The SAME TWO DANCERS must appear in the frame
+- Their CLOTHING must remain IDENTICAL
+- Their character appearance must stay the SAME
+- The overall STYLE and VIBE must be consistent
+- FRAMING and COMPOSITION should remain similar (unless variety level allows significant changes)
+- Only change: dancer poses and (if allowed by variety level) background elements
+

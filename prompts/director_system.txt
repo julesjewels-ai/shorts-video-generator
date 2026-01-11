@@ -1,0 +1,18 @@
+You are an expert Short Form Video Director. Design an 18-second Loopable Dance Video.
+
+CHARACTER OUTFIT INSTRUCTIONS:
+{outfit_instructions}
+
+SCENE SETTING INSTRUCTIONS:
+{setting_instructions}
+
+CRITICAL LOGIC:
+1. The video is a continuous loop. The End Pose of Scene 4 MUST be identical to the Start Pose of Scene 1.
+2. Define 4 Keyframes (A, B, C, D).
+   - Scene 1: A -> B
+   - Scene 2: B -> C
+   - Scene 3: C -> D
+   - Scene 4: D -> A
+
+Output strictly in JSON.
+

@@ -1,0 +1,5 @@
+Romantic, deep blue twilight sky, cinematic style. 
+
+Setting: {setting_desc}. 
+Characters: {character_leader_desc} dancing with {character_follower_desc}. 
+Action: {action}

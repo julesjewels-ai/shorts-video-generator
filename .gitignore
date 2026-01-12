@@ -45,3 +45,9 @@ htmlcov/
 .idea/
 *.swp
 *.swo
+
+# Media and Reference Assets
+**/reference_images/
+prompts/*.png
+prompts/*.jpeg
+prompts/*.jpg

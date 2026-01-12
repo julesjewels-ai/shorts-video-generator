@@ -5,13 +5,15 @@ following the Single Responsibility Principle by separating batch logic from mai
 """
 
 import os
+import time
 from typing import Optional, List
 from dance_loop_gen.config import Config
-from dance_loop_gen.core.models import CSVRow
+from dance_loop_gen.core.models import CSVRow, ProcessingResult
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
+from dance_loop_gen.services.reporter import ReportService
 from dance_loop_gen.utils.csv_handler import CSVHandler
 from dance_loop_gen.utils.request_builder import build_request_from_csv
 from dance_loop_gen.utils.logger import setup_logger, console
@@ -43,6 +45,7 @@ class BatchOrchestrator:
         self.cinematographer = cinematographer
         self.veo = veo
         self.seo_specialist = seo_specialist
+        self.reporter = ReportService()
     
     def resolve_csv_path(self, csv_path: str) -> Optional[str]:
         """Resolve CSV path to absolute path.
@@ -152,6 +155,7 @@ class BatchOrchestrator:
             raise
         
         # Process each row with a progress bar
+        processing_results = []
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -164,7 +168,7 @@ class BatchOrchestrator:
             for idx, csv_row in enumerate(pending_rows, start=1):
                 progress.update(batch_task, description=f"[cyan]Processing {idx}/{len(pending_rows)}: [italic]{csv_row.style}[/italic]")
                 
-                self._process_single_row(
+                result = self._process_single_row(
                     csv_row,
                     idx,
                     len(pending_rows),
@@ -172,8 +176,13 @@ class BatchOrchestrator:
                     csv_path,
                     video_processor
                 )
+                processing_results.append(result)
                 progress.advance(batch_task)
         
+        # Generate Report
+        report_path = self.reporter.generate_excel_report(processing_results, Config.OUTPUT_DIR)
+        console.print(f"[bold green]📊 Report generated:[/bold green] {report_path}")
+
         console.print(Rule(style="bold green"))
         console.print(f"[bold green]🎉 Batch processing complete![/bold green]")
         console.print(f"Processed [bold]{len(pending_rows)}[/bold] videos")
@@ -187,7 +196,7 @@ class BatchOrchestrator:
         base_user_request: str,
         csv_path: str,
         video_processor
-    ) -> None:
+    ) -> ProcessingResult:
         """Process a single CSV row.
         
         Args:
@@ -197,7 +206,11 @@ class BatchOrchestrator:
             base_user_request: Base template for user requests
             csv_path: Path to CSV file
             video_processor: Callable that processes a single video
+
+        Returns:
+            ProcessingResult object
         """
+        start_time = time.time()
         logger.info("=" * 60)
         logger.info(f"PROCESSING VIDEO {idx}/{total}")
         logger.info(f"Style: {csv_row.style}")
@@ -231,7 +244,23 @@ class BatchOrchestrator:
                 logger.info(f"Updated CSV row {csv_row.row_index} to Created=TRUE")
                 console.print(f"[italic gray]📝 Updated CSV: Row {csv_row.row_index} marked as complete[/italic gray]")
             
+            return ProcessingResult(
+                row_index=csv_row.row_index,
+                style=csv_row.style,
+                status="Success",
+                output_dir=output_dir,
+                duration_seconds=time.time() - start_time
+            )
+
         except Exception as e:
             logger.error(f"❌ Failed to process video {idx}/{total}: {e}", exc_info=True)
             console.print(f"[bold red]❌ Failed to process video {idx}/{total}:[/bold red] {e}")
             console.print("[yellow]Continuing with next video...[/yellow]\n")
+
+            return ProcessingResult(
+                row_index=csv_row.row_index,
+                style=csv_row.style,
+                status="Failed",
+                error_message=str(e),
+                duration_seconds=time.time() - start_time
+            )

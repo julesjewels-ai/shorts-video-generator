@@ -1,5 +1,5 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 class Scene(BaseModel):
     """Represents a single scene in the dance video."""
@@ -75,6 +75,24 @@ class CSVRow(BaseModel):
     class Config:
         populate_by_name = True
 
+    @field_validator('style')
+    @classmethod
+    def style_must_not_be_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('Style cannot be empty')
+        return v.strip()
+
+    @field_validator('duration')
+    @classmethod
+    def duration_must_be_valid(cls, v: str) -> str:
+        if not v.endswith('s'):
+            raise ValueError("Duration must end with 's' (e.g., '18s')")
+        try:
+            int(v[:-1])
+        except ValueError:
+            raise ValueError("Duration must be a number followed by 's'")
+        return v
+
 
 
 class CSVBatchConfig(BaseModel):
@@ -82,3 +100,13 @@ class CSVBatchConfig(BaseModel):
     csv_path: str
     process_uncreated_only: bool = Field(default=True)
     update_created_flag: bool = Field(default=True)
+
+
+class ProcessingResult(BaseModel):
+    """Result of a single video generation task."""
+    row_index: int
+    style: str
+    status: str = Field(description="Status of the generation: 'Success' or 'Failed'")
+    output_dir: Optional[str] = Field(default=None, description="Path to the generated video directory")
+    error_message: Optional[str] = Field(default=None, description="Error message if generation failed")
+    duration_seconds: float = Field(description="Time taken to process in seconds")

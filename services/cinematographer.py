@@ -225,142 +225,81 @@ class CinematographerService(ICinematographer):
                 "status": "success"
             }, logger)
             
-            # 2. GENERATE KEYFRAME B (Editing Keyframe A)
-            logger.info("--- Generating Keyframe B (via Editing) ---")
+            # Initialize history and previous response for the loop
+            current_history = None
+            previous_response_parts = response_a.parts
             
-            # Create a new prompt that describes the previous scene without reference pose
-            prompt_b_base = PromptLoader.load_formatted(
-                "cinematographer_master.txt",
-                setting_desc=plan.setting_desc,
-                character_leader_desc=plan.character_leader_desc,
-                character_follower_desc=plan.character_follower_desc,
-                action=plan.scenes[0].start_pose_description
-            )
+            # Map indices to Keyframe letters
+            keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
             
-            # Add the editing instruction for the new pose
-            prompt_b_edit = PromptLoader.load_formatted(
-                "cinematographer_edit.txt",
-                pose_description=plan.scenes[1].start_pose_description,
-                variety_instruction=variety_instruction
-            )
-            
-            logger.debug(f"Prompt B base length: {len(prompt_b_base)} chars")
-            logger.debug(f"Prompt B edit length: {len(prompt_b_edit)} chars")
-            
-            save_state("cinematographer_keyframe_b_prompt", {
-                "prompt_base": prompt_b_base,
-                "prompt_edit": prompt_b_edit,
-                "prompt_length": len(prompt_b_base) + len(prompt_b_edit)
-            }, logger)
-            
-            print("   Generating Keyframe B (New Scene)...")
-            logger.info(f"Calling Gemini API for Keyframe B - new conversation without reference pose")
-            
-            # Build a NEW conversation history that excludes the reference pose image
-            # This ensures Keyframe B is not influenced by the reference pose
-            history_b = [
-                types.Content(role="user", parts=[types.Part(text=prompt_b_base)]),
-                types.Content(role="model", parts=response_a.parts),  # Contains Keyframe A image
-                types.Content(role="user", parts=[types.Part(text=prompt_b_edit)])
-            ]
-            logger.debug(f"History B length: {len(history_b)} messages (without reference pose)")
-            
-            response_b = self.client.models.generate_content(
-                model=Config.MODEL_NAME_IMAGE,
-                contents=history_b
-            )
-            
-            logger.info("Keyframe B API response received")
-            logger.debug(f"Response parts count: {len(response_b.parts)}")
-            
-            part_b = [p for p in response_b.parts if p.inline_data][0]
-            path_b = self._save_image(part_b, "keyframe_B.png")
-            assets['B'] = path_b
-            
-            save_state("cinematographer_keyframe_b_complete", {
-                "path": path_b,
-                "status": "success"
-            }, logger)
+            # Process remaining scenes (B, C, D...)
+            for i, scene in enumerate(plan.scenes[1:], start=1):
+                if i >= len(keyframe_letters):
+                    logger.warning(f"Scene index {i} exceeds supported keyframe letters. Skipping.")
+                    break
 
-            # 3. GENERATE KEYFRAME C (Editing Keyframe B)
-            logger.info("--- Generating Keyframe C (via Editing) ---")
-            prompt_c = PromptLoader.load_formatted(
-                "cinematographer_edit.txt",
-                pose_description=plan.scenes[2].start_pose_description,
-                variety_instruction=variety_instruction
-            )
-            logger.debug(f"Prompt C length: {len(prompt_c)} chars")
-            
-            save_state("cinematographer_keyframe_c_prompt", {
-                "prompt": prompt_c,
-                "prompt_length": len(prompt_c)
-            }, logger)
-            
-            print("   Generating Keyframe C (via Editing)...")
-            logger.info(f"Calling Gemini API for Keyframe C with full conversation history")
-            
-            history_c = history_b + [
-                types.Content(role="model", parts=response_b.parts),  # Contains Sig B
-                types.Content(role="user", parts=[types.Part(text=prompt_c)])
-            ]
-            logger.debug(f"History C length: {len(history_c)} messages")
-            
-            response_c = self.client.models.generate_content(
-                model=Config.MODEL_NAME_IMAGE,
-                contents=history_c
-            )
-            
-            logger.info("Keyframe C API response received")
-            logger.debug(f"Response parts count: {len(response_c.parts)}")
-            
-            part_c = [p for p in response_c.parts if p.inline_data][0]
-            path_c = self._save_image(part_c, "keyframe_C.png")
-            assets['C'] = path_c
-            
-            save_state("cinematographer_keyframe_c_complete", {
-                "path": path_c,
-                "status": "success"
-            }, logger)
+                keyframe_letter = keyframe_letters[i]
+                logger.info(f"--- Generating Keyframe {keyframe_letter} (via Editing) ---")
 
-            # 4. GENERATE KEYFRAME D (Editing Keyframe C)
-            logger.info("--- Generating Keyframe D (via Editing) ---")
-            prompt_d = PromptLoader.load_formatted(
-                "cinematographer_edit.txt",
-                pose_description=plan.scenes[3].start_pose_description,
-                variety_instruction=variety_instruction
-            )
-            logger.debug(f"Prompt D length: {len(prompt_d)} chars")
-            
-            save_state("cinematographer_keyframe_d_prompt", {
-                "prompt": prompt_d,
-                "prompt_length": len(prompt_d)
-            }, logger)
-            
-            print("   Generating Keyframe D (via Editing)...")
-            logger.info(f"Calling Gemini API for Keyframe D with full conversation history")
-            
-            history_d = history_c + [
-                types.Content(role="model", parts=response_c.parts),  # Contains Keyframe C
-                types.Content(role="user", parts=[types.Part(text=prompt_d)])
-            ]
-            logger.debug(f"History D length: {len(history_d)} messages")
-            
-            response_d = self.client.models.generate_content(
-                model=Config.MODEL_NAME_IMAGE,
-                contents=history_d
-            )
-            
-            logger.info("Keyframe D API response received")
-            logger.debug(f"Response parts count: {len(response_d.parts)}")
-            
-            part_d = [p for p in response_d.parts if p.inline_data][0]
-            path_d = self._save_image(part_d, "keyframe_D.png")
-            assets['D'] = path_d
-            
-            save_state("cinematographer_keyframe_d_complete", {
-                "path": path_d,
-                "status": "success"
-            }, logger)
+                # Load edit prompt
+                prompt_edit = PromptLoader.load_formatted(
+                    "cinematographer_edit.txt",
+                    pose_description=scene.start_pose_description,
+                    variety_instruction=variety_instruction
+                )
+
+                logger.debug(f"Prompt {keyframe_letter} length: {len(prompt_edit)} chars")
+
+                print(f"   Generating Keyframe {keyframe_letter} (via Editing)...")
+
+                # Special handling for Keyframe B: Reset history to exclude reference pose
+                if keyframe_letter == 'B':
+                    # Create a new prompt that describes the previous scene (A) without reference pose
+                    prompt_base = PromptLoader.load_formatted(
+                        "cinematographer_master.txt",
+                        setting_desc=plan.setting_desc,
+                        character_leader_desc=plan.character_leader_desc,
+                        character_follower_desc=plan.character_follower_desc,
+                        action=plan.scenes[0].start_pose_description
+                    )
+
+                    # Build NEW conversation history
+                    current_history = [
+                        types.Content(role="user", parts=[types.Part(text=prompt_base)]),
+                        types.Content(role="model", parts=previous_response_parts),
+                        types.Content(role="user", parts=[types.Part(text=prompt_edit)])
+                    ]
+                    logger.debug("History reset for Keyframe B (without reference pose)")
+
+                else:
+                    # Append to existing history
+                    current_history.extend([
+                        types.Content(role="model", parts=previous_response_parts),
+                        types.Content(role="user", parts=[types.Part(text=prompt_edit)])
+                    ])
+
+                logger.debug(f"History length: {len(current_history)} messages")
+
+                # Generate content
+                response = self.client.models.generate_content(
+                    model=Config.MODEL_NAME_IMAGE,
+                    contents=list(current_history)
+                )
+
+                logger.info(f"Keyframe {keyframe_letter} API response received")
+
+                # Save asset
+                part = [p for p in response.parts if p.inline_data][0]
+                path = self._save_image(part, f"keyframe_{keyframe_letter}.png")
+                assets[keyframe_letter] = path
+
+                save_state(f"cinematographer_keyframe_{keyframe_letter.lower()}_complete", {
+                    "path": path,
+                    "status": "success"
+                }, logger)
+
+                # Update for next iteration
+                previous_response_parts = response.parts
 
             logger.info("=" * 40)
             logger.info("Cinematographer: All keyframes generated successfully")

@@ -1,5 +1,20 @@
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+class DirectorInput(BaseModel):
+    """Secure input model for Director service to prevent prompt injection and DoS."""
+    user_prompt: str = Field(..., min_length=1, max_length=2000, description="User's request for the video plan")
+
+    @field_validator('user_prompt')
+    @classmethod
+    def sanitize_prompt(cls, v: str) -> str:
+        # Strip whitespace
+        v = v.strip()
+        # Basic check for non-printable characters (control chars) to prevent binary injection
+        # Allow newlines, tabs, and carriage returns
+        if any(ord(c) < 32 and c not in '\n\r\t' for c in v):
+             raise ValueError("Input contains invalid control characters")
+        return v
 
 class Scene(BaseModel):
     """Represents a single scene in the dance video."""

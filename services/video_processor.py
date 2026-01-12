@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Optional
 from dance_loop_gen.config import Config
-from dance_loop_gen.core.models import CSVRow
+from dance_loop_gen.core.models import CSVRow, DirectorInput
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
@@ -51,7 +51,13 @@ class VideoProcessor:
         """
         # 1. Generate Plan
         logger.info("Generating video plan via Director...")
-        project_plan = director.generate_plan(user_request)
+
+        # Create secure input model
+        # The user_request might contain control characters if not sanitized,
+        # so we validate it early before passing to the AI service.
+        director_input = DirectorInput(user_prompt=user_request)
+
+        project_plan = director.generate_plan(director_input)
         logger.info(f"Plan generated successfully: {project_plan.title}")
         logger.debug(f"Plan scenes: {len(project_plan.scenes)}")
         

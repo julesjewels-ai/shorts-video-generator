@@ -1,8 +1,8 @@
-from typing import Dict, Any
+from typing import Dict, Any, Union
 from google import genai
 from google.genai import types
 from ..core.interfaces import IDirector
-from ..core.models import VideoPlan
+from ..core.models import VideoPlan, DirectorInput
 from ..config import Config
 from ..utils.prompt_loader import PromptLoader
 from ..utils.logger import setup_logger, save_state
@@ -133,7 +133,22 @@ class DirectorService(IDirector):
 
         return plan
 
-    def generate_plan(self, user_input: str) -> VideoPlan:
+    def generate_plan(self, input_data: Union[DirectorInput, str]) -> VideoPlan:
+        """Generate a video plan from user input.
+
+        Args:
+            input_data: Validated DirectorInput or raw string (will be converted/validated)
+
+        Returns:
+            VideoPlan: The generated video plan.
+        """
+        # Ensure input is validated
+        if isinstance(input_data, str):
+            logger.info("Converting raw string input to DirectorInput...")
+            input_data = DirectorInput(user_prompt=input_data)
+
+        user_input = input_data.user_prompt
+
         print("🎬 Director is thinking (High Reasoning Mode)...")
 
         logger.info(f"generate_plan called with input length: {len(user_input)} chars")

@@ -1,15 +1,52 @@
 import os
 import mimetypes
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 class PromptLoader:
     @staticmethod
+    def _get_safe_path(filename: str) -> Path:
+        """
+        Resolves the filename within the prompts directory and ensures
+        it doesn't traverse outside of it.
+        """
+        from ..config import Config  # Lazy import to avoid circular dependency
+        from ..utils.logger import setup_logger # Lazy import
+        
+        logger = setup_logger()
+
+        base_dir = Path(Config.PROMPTS_DIR).resolve()
+
+        if os.path.isabs(filename):
+             msg = f"Security event: Absolute path attempt blocked: {filename}"
+             logger.error(msg)
+             raise ValueError(msg)
+
+        target_path = (base_dir / filename).resolve()
+
+        # Security check: Ensure the resolved path is relative to base directory
+        # Using is_relative_to (Python 3.9+)
+        try:
+            target_path.relative_to(base_dir)
+        except ValueError:
+            msg = f"Security event: Path traversal attempt blocked: {filename} (resolved to {target_path})"
+            logger.error(msg)
+            raise ValueError(msg)
+
+        return target_path
+
+    @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
-        from ..config import Config  # Lazy import to avoid circular dependency
-        
-        path = os.path.join(Config.PROMPTS_DIR, filename)
-        if not os.path.exists(path):
+        try:
+            path = PromptLoader._get_safe_path(filename)
+        except ValueError as e:
+            # Re-raise as ValueError or handle?
+            # Original code raised FileNotFoundError if not found.
+            # Here we might be raising ValueError for security.
+            raise e
+
+        if not path.exists():
             raise FileNotFoundError(f"Prompt file not found: {path}")
             
         with open(path, "r", encoding="utf-8") as f:
@@ -31,7 +68,10 @@ class PromptLoader:
         try:
             content = PromptLoader.load(filename)
             return content if content.strip() else None
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
+            # ValueError is raised for security violations, which are logged.
+            # We return None to fail gracefully in the application flow,
+            # but the security event is already logged.
             return None
 
     @staticmethod
@@ -47,20 +87,24 @@ class PromptLoader:
         Returns:
             Tuple of (image_bytes, mime_type) if file exists, None otherwise.
         """
-        from ..config import Config  # Lazy import to avoid circular dependency
-        
-        path = os.path.join(Config.PROMPTS_DIR, filename)
+        try:
+            path = PromptLoader._get_safe_path(filename)
+        except ValueError:
+            return None
         
         # Check for exact match first
-        if not os.path.exists(path):
+        if not path.exists():
             # If it's a generic request without extension, try common ones
             base, ext = os.path.splitext(filename)
             if not ext:
                 for target_ext in [".png", ".jpg", ".jpeg"]:
-                    test_path = path + target_ext
-                    if os.path.exists(test_path):
-                        path = test_path
-                        break
+                    try:
+                        test_path = PromptLoader._get_safe_path(filename + target_ext)
+                        if test_path.exists():
+                            path = test_path
+                            break
+                    except ValueError:
+                        continue
                 else:
                     return None
             else:
@@ -92,13 +136,25 @@ class PromptLoader:
             Empty list if no matching files found.
         """
         from ..config import Config  # Lazy import to avoid circular dependency
+        from ..utils.logger import setup_logger
         import glob
         
+        logger = setup_logger()
+
+        # Security check: pattern should not contain directory separators
+        if os.sep in pattern or (os.altsep and os.altsep in pattern):
+             msg = f"Security event: Invalid pattern containing path separators: {pattern}"
+             logger.error(msg)
+             raise ValueError(msg)
+
         # Build search pattern for numbered files
         matching_files = []
+        base_dir = Path(Config.PROMPTS_DIR).resolve()
+
         for ext in ["png", "jpg", "jpeg", "jpe"]:
-            search_pattern = os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
-            matching_files.extend(glob.glob(search_pattern))
+            # We construct the search pattern relative to base_dir
+            search_pattern = base_dir / f"{pattern}_*.{ext}"
+            matching_files.extend(glob.glob(str(search_pattern)))
         
         if not matching_files:
             return []
@@ -107,14 +163,17 @@ class PromptLoader:
         matching_files.sort()
         
         images = []
-        for path in matching_files:
+        for path_str in matching_files:
+            # Double check that the found file is indeed in base_dir
+            # (glob shouldn't return outside files unless pattern has .., which we checked)
+
             # Determine MIME type
-            mime_type, _ = mimetypes.guess_type(path)
+            mime_type, _ = mimetypes.guess_type(path_str)
             if not mime_type or not mime_type.startswith('image/'):
                 continue
                 
             try:
-                with open(path, "rb") as f:
+                with open(path_str, "rb") as f:
                     image_bytes = f.read()
                     
                 if image_bytes:
@@ -123,5 +182,3 @@ class PromptLoader:
                 continue
                 
         return images
-
-

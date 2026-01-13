@@ -82,3 +82,14 @@ class CSVBatchConfig(BaseModel):
     csv_path: str
     process_uncreated_only: bool = Field(default=True)
     update_created_flag: bool = Field(default=True)
+
+
+class ProcessingResult(BaseModel):
+    """Result of a single video processing task."""
+    title: str
+    output_dir: str
+    status: str
+    timestamp: str
+    keyframe_paths: List[str] = Field(default_factory=list)
+    metadata_path: Optional[str] = None
+    csv_row_index: Optional[int] = None

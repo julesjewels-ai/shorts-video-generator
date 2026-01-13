@@ -5,13 +5,15 @@ following the Single Responsibility Principle by separating batch logic from mai
 """
 
 import os
+from datetime import datetime
 from typing import Optional, List
 from dance_loop_gen.config import Config
-from dance_loop_gen.core.models import CSVRow
+from dance_loop_gen.core.models import CSVRow, ProcessingResult
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
+from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.utils.csv_handler import CSVHandler
 from dance_loop_gen.utils.request_builder import build_request_from_csv
 from dance_loop_gen.utils.logger import setup_logger, console
@@ -29,7 +31,8 @@ class BatchOrchestrator:
         director: DirectorService,
         cinematographer: CinematographerService,
         veo: VeoService,
-        seo_specialist: SEOSpecialistService
+        seo_specialist: SEOSpecialistService,
+        report_service: Optional[ReportService] = None
     ):
         """Initialize the batch orchestrator.
         
@@ -38,11 +41,13 @@ class BatchOrchestrator:
             cinematographer: Cinematographer service instance
             veo: Veo service instance
             seo_specialist: SEO Specialist service instance
+            report_service: Optional Report service instance
         """
         self.director = director
         self.cinematographer = cinematographer
         self.veo = veo
         self.seo_specialist = seo_specialist
+        self.report_service = report_service or ReportService()
     
     def resolve_csv_path(self, csv_path: str) -> Optional[str]:
         """Resolve CSV path to absolute path.
@@ -152,6 +157,8 @@ class BatchOrchestrator:
             raise
         
         # Process each row with a progress bar
+        results: List[ProcessingResult] = []
+
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -164,7 +171,7 @@ class BatchOrchestrator:
             for idx, csv_row in enumerate(pending_rows, start=1):
                 progress.update(batch_task, description=f"[cyan]Processing {idx}/{len(pending_rows)}: [italic]{csv_row.style}[/italic]")
                 
-                self._process_single_row(
+                result = self._process_single_row(
                     csv_row,
                     idx,
                     len(pending_rows),
@@ -172,8 +179,21 @@ class BatchOrchestrator:
                     csv_path,
                     video_processor
                 )
+                if result:
+                    results.append(result)
+
                 progress.advance(batch_task)
         
+        # Generate consolidated report
+        if results:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            report_path = os.path.join(Config.OUTPUT_DIR, f"batch_report_{timestamp}.xlsx")
+            try:
+                self.report_service.generate_excel_report(results, report_path)
+            except Exception as e:
+                logger.error(f"Failed to generate batch report: {e}")
+                console.print(f"[bold red]⚠ Failed to generate report:[/bold red] {e}")
+
         console.print(Rule(style="bold green"))
         console.print(f"[bold green]🎉 Batch processing complete![/bold green]")
         console.print(f"Processed [bold]{len(pending_rows)}[/bold] videos")
@@ -187,7 +207,7 @@ class BatchOrchestrator:
         base_user_request: str,
         csv_path: str,
         video_processor
-    ) -> None:
+    ) -> Optional[ProcessingResult]:
         """Process a single CSV row.
         
         Args:
@@ -197,6 +217,9 @@ class BatchOrchestrator:
             base_user_request: Base template for user requests
             csv_path: Path to CSV file
             video_processor: Callable that processes a single video
+
+        Returns:
+            ProcessingResult if successful, None otherwise
         """
         logger.info("=" * 60)
         logger.info(f"PROCESSING VIDEO {idx}/{total}")
@@ -210,6 +233,11 @@ class BatchOrchestrator:
         # Build enriched request from CSV
         enriched_request = build_request_from_csv(csv_row, base_user_request)
         
+        result_status = "error"
+        output_dir_path = ""
+        keyframe_paths = []
+        metadata_path = None
+
         # Process the video
         try:
             output_dir = video_processor(
@@ -231,7 +259,33 @@ class BatchOrchestrator:
                 logger.info(f"Updated CSV row {csv_row.row_index} to Created=TRUE")
                 console.print(f"[italic gray]📝 Updated CSV: Row {csv_row.row_index} marked as complete[/italic gray]")
             
+            result_status = "success"
+            output_dir_path = output_dir
+
+            # Collect artifacts for report
+            try:
+                for f in os.listdir(output_dir):
+                    full_path = os.path.join(output_dir, f)
+                    if f.endswith(".png") and "keyframe" in f:
+                        keyframe_paths.append(full_path)
+                    elif f.endswith(".json") and "metadata" in f:
+                        metadata_path = full_path
+                keyframe_paths.sort() # Ensure consistent order
+            except Exception as e:
+                logger.warning(f"Failed to collect artifacts for report: {e}")
+
         except Exception as e:
             logger.error(f"❌ Failed to process video {idx}/{total}: {e}", exc_info=True)
             console.print(f"[bold red]❌ Failed to process video {idx}/{total}:[/bold red] {e}")
             console.print("[yellow]Continuing with next video...[/yellow]\n")
+            result_status = "failed"
+
+        return ProcessingResult(
+            title=csv_row.style or f"Row {csv_row.row_index}",
+            output_dir=output_dir_path,
+            status=result_status,
+            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            keyframe_paths=keyframe_paths,
+            metadata_path=metadata_path,
+            csv_row_index=csv_row.row_index
+        )

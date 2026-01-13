@@ -17,16 +17,22 @@ class CinematographerService(ICinematographer):
         self.output_dir = Config.OUTPUT_DIR
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Load multiple reference pose images for batch iteration
-        self.reference_poses = PromptLoader.load_multiple_images("reference_pose")
+        # Load reference pose images
+        # 1. Try loading all images from the reference_images folder first
+        self.reference_poses = PromptLoader.load_images_from_directory(Config.REFERENCE_IMAGES_DIR)
         
-        # Fall back to single reference pose if no numbered files found
+        # 2. If folder is empty/missing, fall back to "reference_pose" pattern in prompts dir
         if not self.reference_poses:
-            single_pose = PromptLoader.load_optional_image("reference_pose.png")
-            if not single_pose:
-                single_pose = PromptLoader.load_optional_image("reference_pose.jpg")
-            if single_pose:
-                self.reference_poses = [single_pose]
+            self.reference_poses = PromptLoader.load_multiple_images("reference_pose")
+        
+        # 3. Last resort: fall back to single "reference_pose.png/jpg"
+        if not self.reference_poses:
+            for ext in [".png", ".jpg", ".jpeg"]:
+                single_pose = PromptLoader.load_optional_image(f"reference_pose{ext}")
+                if single_pose:
+                    self.reference_poses = [single_pose]
+                    break
+
         
         logger.debug(f"CinematographerService initialized with output_dir: {self.output_dir}")
         logger.info(f"Loaded {len(self.reference_poses)} reference pose(s)")

@@ -84,33 +84,34 @@ class CSVHandler:
         
         Args:
             csv_path: Path to the CSV file
-            row_index: The row index to update (1-indexed, excluding header)
+            row_index: The row index to update (1-indexed, including header)
         """
         if not os.path.exists(csv_path):
             raise FileNotFoundError(f"CSV file not found: {csv_path}")
         
-        # Read all rows
-        with open(csv_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+        # Read all rows using csv reader to handle quotes/commas correctly
+        rows = []
+        fieldnames = []
+        with open(csv_path, 'r', encoding='utf-8', newline='') as f:
+            reader = csv.reader(f)
+            fieldnames = next(reader)
+            rows = list(reader)
         
         # Update the specific row
-        # row_index is 1-indexed (actual line number in file)
-        # lines is 0-indexed, so we access lines[row_index - 1]
-        if row_index <= len(lines) and row_index > 0:
-            # Split the row into columns
-            row_data = lines[row_index - 1].rstrip('\n').split(',')
+        # row_index is 1-indexed (header is 1, so index - 2 is the row in list)
+        list_index = row_index - 2
+        
+        if 0 <= list_index < len(rows):
+            # Update first column (Created) - assuming it's always the first column
+            rows[list_index][0] = 'TRUE'
             
-            # Update first column (Created)
-            row_data[0] = 'TRUE'
-            
-            # Reconstruct the row
-            lines[row_index - 1] = ','.join(row_data) + '\n'
-            
-            # Write back
-            with open(csv_path, 'w', encoding='utf-8') as f:
-                f.writelines(lines)
+            # Write back using csv writer
+            with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(fieldnames)
+                writer.writerows(rows)
         else:
-            raise ValueError(f"Row index {row_index} out of range (file has {len(lines)} lines)")
+            raise ValueError(f"Row index {row_index} out of range (file has {len(rows) + 1} lines)")
     
     @staticmethod
     def create_backup(csv_path: str) -> str:

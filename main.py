@@ -17,6 +17,7 @@ from dance_loop_gen.utils.prompt_loader import PromptLoader
 from dance_loop_gen.utils.logger import setup_logger, save_state, get_run_dir, console
 from rich.panel import Panel
 from rich.table import Table
+from rich.rule import Rule
 
 # Initialize logger
 logger = setup_logger()
@@ -45,6 +46,20 @@ def initialize_services(client: genai.Client) -> tuple:
         logger.info("All services initialized")
     
     console.print("[green]✔[/green] Services initialized successfully")
+    
+    # Mode Announcement
+    if batch_orchestrator.should_use_batch_mode():
+        console.print(Panel("[bold cyan]🔄 BATCH PROCESSING MODE DETECTED[/bold cyan]", border_style="cyan"))
+        logger.info("Application detected Batch Mode via CSV_INPUT_PATH")
+    else:
+        # Check if CSV path was actually set but missing
+        if Config.CSV_INPUT_PATH:
+            console.print(Panel(f"[bold yellow]⚠ BATCH MODE ATTEMPTED BUT FAILED[/bold yellow]\nCSV file not found: [italic]{Config.CSV_INPUT_PATH}[/italic]\n\n[bold white]Falling back to SINGLE mode...[/bold white]", title="Warning", border_style="yellow"))
+            logger.warning(f"Batch mode was configured but CSV file was missing: {Config.CSV_INPUT_PATH}")
+        else:
+            console.print(Panel("[bold magenta]🎯 SINGLE VIDEO MODE[/bold magenta]", border_style="magenta"))
+            logger.info("Application starting in Single Mode")
+            
     return director, cinematographer, veo, seo_specialist, batch_orchestrator
 
 
@@ -108,6 +123,8 @@ def run_single_mode(
     logger.info("=" * 60)
     logger.info("SINGLE PROCESSING MODE")
     logger.info("=" * 60)
+    
+    console.print(Rule("[bold magenta]Single Processing Mode[/bold magenta]", style="magenta"))
     
     save_state("02_user_request", {
         "user_request": base_user_request,

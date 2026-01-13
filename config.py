@@ -13,8 +13,10 @@ class Config:
     MODEL_NAME_IMAGE = "gemini-3-pro-image-preview" # gemini-2.5-flash-image gemini-3-pro-image-preview
 
     # Paths
-    OUTPUT_DIR = "Output"
+    OUTPUT_DIR = "output/shorts"
     PROMPTS_DIR = os.path.join(os.path.dirname(__file__), "prompts")
+    REFERENCE_IMAGES_DIR = os.path.join(PROMPTS_DIR, "reference_images")
+
     
     # CSV Batch Processing
     CSV_INPUT_PATH = os.getenv("CSV_INPUT_PATH", None)

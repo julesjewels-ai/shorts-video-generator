@@ -1,13 +1,12 @@
 import os
 import mimetypes
 from typing import Dict, Any, Optional, Tuple
+from ..config import Config
 
 class PromptLoader:
     @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
-        from ..config import Config  # Lazy import to avoid circular dependency
-        
         path = os.path.join(Config.PROMPTS_DIR, filename)
         if not os.path.exists(path):
             raise FileNotFoundError(f"Prompt file not found: {path}")
@@ -47,8 +46,6 @@ class PromptLoader:
         Returns:
             Tuple of (image_bytes, mime_type) if file exists, None otherwise.
         """
-        from ..config import Config  # Lazy import to avoid circular dependency
-        
         path = os.path.join(Config.PROMPTS_DIR, filename)
         
         # Check for exact match first
@@ -78,50 +75,31 @@ class PromptLoader:
 
     @staticmethod
     def load_multiple_images(pattern: str) -> list:
-        """Loads multiple image files matching a pattern from the prompts directory.
+        """Loads multiple image files matching a pattern from the prompts directory."""
+        from pathlib import Path
         
-        This is useful for loading multiple reference poses (e.g., reference_pose_*.png)
-        where the user wants to iterate through different poses for batch processing.
-        
-        Args:
-            pattern: Pattern for the base filename (e.g., 'reference_pose')
-                    Will search for files like 'reference_pose_1.png', 'reference_pose_2.png', etc.
-            
-        Returns:
-            List of tuples of (image_bytes, mime_type), sorted by filename.
-            Empty list if no matching files found.
-        """
-        from ..config import Config  # Lazy import to avoid circular dependency
-        import glob
-        
-        # Build search pattern for numbered files
-        matching_files = []
-        for ext in ["png", "jpg", "jpeg", "jpe"]:
-            search_pattern = os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
-            matching_files.extend(glob.glob(search_pattern))
-        
-        if not matching_files:
-            return []
-        
-        # Sort to ensure consistent ordering (1, 2, 3, ...)
-        matching_files.sort()
-        
+        prompts_dir = Path(Config.PROMPTS_DIR)
         images = []
-        for path in matching_files:
-            # Determine MIME type
+
+        # Find all matching files (sorted for consistency)
+        # Using sorted ensures 1 comes before 2, but '10' comes before '2'.
+        # Standard glob behavior in original code also had this dictionary sort issue.
+        # Strict Ockham: preserve behavior while simplifying.
+        files = sorted([
+            p for p in prompts_dir.glob(f"{pattern}_*")
+            if p.suffix.lower() in {'.png', '.jpg', '.jpeg', '.jpe'}
+        ])
+
+        for path in files:
             mime_type, _ = mimetypes.guess_type(path)
-            if not mime_type or not mime_type.startswith('image/'):
-                continue
-                
-            try:
-                with open(path, "rb") as f:
-                    image_bytes = f.read()
+            if mime_type and mime_type.startswith('image/'):
+                try:
+                    content = path.read_bytes()
+                    if content:
+                        images.append((content, mime_type))
+                except Exception:
+                    continue
                     
-                if image_bytes:
-                    images.append((image_bytes, mime_type))
-            except Exception:
-                continue
-                
         return images
 
 

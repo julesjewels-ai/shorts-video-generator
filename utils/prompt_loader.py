@@ -1,14 +1,41 @@
 import os
 import mimetypes
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 class PromptLoader:
+    @staticmethod
+    def _validate_path(filename: str, base_dir: str) -> str:
+        """Validates that the filename resolves to a path within base_dir.
+
+        Args:
+            filename: The relative filename or path.
+            base_dir: The trusted base directory.
+
+        Returns:
+            The resolved absolute path as a string.
+
+        Raises:
+            ValueError: If path traversal is detected.
+        """
+        base_path = Path(base_dir).resolve()
+        target_path = (base_path / filename).resolve()
+
+        # Ensure the resolved path is relative to the base path
+        try:
+            target_path.relative_to(base_path)
+        except ValueError:
+            raise ValueError(f"Security violation: Path traversal detected for '{filename}'")
+
+        return str(target_path)
+
     @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
         from ..config import Config  # Lazy import to avoid circular dependency
         
-        path = os.path.join(Config.PROMPTS_DIR, filename)
+        path = PromptLoader._validate_path(filename, Config.PROMPTS_DIR)
+
         if not os.path.exists(path):
             raise FileNotFoundError(f"Prompt file not found: {path}")
             
@@ -49,7 +76,10 @@ class PromptLoader:
         """
         from ..config import Config  # Lazy import to avoid circular dependency
         
-        path = os.path.join(Config.PROMPTS_DIR, filename)
+        try:
+            path = PromptLoader._validate_path(filename, Config.PROMPTS_DIR)
+        except ValueError:
+            return None
         
         # Check for exact match first
         if not os.path.exists(path):
@@ -57,10 +87,14 @@ class PromptLoader:
             base, ext = os.path.splitext(filename)
             if not ext:
                 for target_ext in [".png", ".jpg", ".jpeg"]:
-                    test_path = path + target_ext
-                    if os.path.exists(test_path):
-                        path = test_path
-                        break
+                    # We need to validate these constructed paths too, though they should be safe if base is safe
+                    try:
+                        test_path = PromptLoader._validate_path(filename + target_ext, Config.PROMPTS_DIR)
+                        if os.path.exists(test_path):
+                            path = test_path
+                            break
+                    except ValueError:
+                        continue
                 else:
                     return None
             else:
@@ -142,9 +176,15 @@ class PromptLoader:
         from ..config import Config  # Lazy import to avoid circular dependency
         import glob
         
+        # Security: Prevent path traversal in pattern
+        if ".." in pattern or "/" in pattern or "\\" in pattern:
+             # Just return empty list for invalid patterns rather than raising error to avoid breaking flows
+             return []
+
         # Build search pattern for numbered files
         matching_files = []
         for ext in ["png", "jpg", "jpeg", "jpe"]:
+            # We construct the pattern safely now
             search_pattern = os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
             matching_files.extend(glob.glob(search_pattern))
         
@@ -156,6 +196,12 @@ class PromptLoader:
         
         images = []
         for path in matching_files:
+            # Validate that the found file is indeed in the prompts directory (defense in depth)
+            try:
+                PromptLoader._validate_path(os.path.basename(path), Config.PROMPTS_DIR)
+            except ValueError:
+                continue
+
             # Determine MIME type
             mime_type, _ = mimetypes.guess_type(path)
             if not mime_type or not mime_type.startswith('image/'):

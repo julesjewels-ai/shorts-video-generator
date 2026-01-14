@@ -6,12 +6,15 @@ following the Single Responsibility Principle by separating batch logic from mai
 
 import os
 from typing import Optional, List
+from datetime import datetime
 from dance_loop_gen.config import Config
 from dance_loop_gen.core.models import CSVRow
+from dance_loop_gen.core.report_models import ReportRow
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
+from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.utils.csv_handler import CSVHandler
 from dance_loop_gen.utils.request_builder import build_request_from_csv
 from dance_loop_gen.utils.logger import setup_logger, console
@@ -29,7 +32,8 @@ class BatchOrchestrator:
         director: DirectorService,
         cinematographer: CinematographerService,
         veo: VeoService,
-        seo_specialist: SEOSpecialistService
+        seo_specialist: SEOSpecialistService,
+        report_service: ReportService
     ):
         """Initialize the batch orchestrator.
         
@@ -38,11 +42,13 @@ class BatchOrchestrator:
             cinematographer: Cinematographer service instance
             veo: Veo service instance
             seo_specialist: SEO Specialist service instance
+            report_service: Report service instance
         """
         self.director = director
         self.cinematographer = cinematographer
         self.veo = veo
         self.seo_specialist = seo_specialist
+        self.report_service = report_service
     
     def resolve_csv_path(self, csv_path: str) -> Optional[str]:
         """Resolve CSV path to absolute path.
@@ -150,6 +156,8 @@ class BatchOrchestrator:
             logger.error(f"Failed to read CSV file: {e}", exc_info=True)
             console.print(f"[bold red]❌ Error reading CSV file:[/bold red] {e}")
             raise
+
+        report_rows = []
         
         # Process each row with a progress bar
         with Progress(
@@ -164,7 +172,7 @@ class BatchOrchestrator:
             for idx, csv_row in enumerate(pending_rows, start=1):
                 progress.update(batch_task, description=f"[cyan]Processing {idx}/{len(pending_rows)}: [italic]{csv_row.style}[/italic]")
                 
-                self._process_single_row(
+                result = self._process_single_row(
                     csv_row,
                     idx,
                     len(pending_rows),
@@ -172,8 +180,51 @@ class BatchOrchestrator:
                     csv_path,
                     video_processor
                 )
+
+                if result:
+                    # Convert result to ReportRow
+                    # Assuming we want to show start/end pose of scene 1, or just start poses of all scenes?
+                    # Let's take available image paths.
+                    # assets dict keys are typically like 'scene_1_start', 'scene_1_end', etc.
+                    # Let's collect 'scene_1_start', 'scene_2_start', etc.
+
+                    thumbnail_paths = []
+                    # Collect up to 5 images for the report
+                    for k in sorted(result.assets.keys()):
+                        if 'start' in k and os.path.exists(result.assets[k]):
+                            thumbnail_paths.append(result.assets[k])
+                        if len(thumbnail_paths) >= 5:
+                            break
+
+                    report_row = ReportRow(
+                        title=result.plan_title,
+                        description=result.plan_description,
+                        generated_at=datetime.now(),
+                        output_dir=result.output_dir,
+                        scene_count=result.scene_count,
+                        tags=result.tags,
+                        thumbnail_paths=thumbnail_paths,
+                        recommended_metadata_option=result.recommended_metadata_option
+                    )
+                    report_rows.append(report_row)
+
                 progress.advance(batch_task)
         
+        # Generate Report
+        if report_rows:
+            try:
+                # Create a reports directory or put it in the output base dir
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                report_dir = os.path.join(Config.OUTPUT_DIR, "reports")
+                os.makedirs(report_dir, exist_ok=True)
+                report_path = os.path.join(report_dir, f"batch_report_{timestamp}.xlsx")
+
+                self.report_service.generate_report(report_rows, report_path)
+                console.print(f"[bold green]📊 Batch Report Generated:[/bold green] {report_path}")
+            except Exception as e:
+                logger.error(f"Failed to generate batch report: {e}", exc_info=True)
+                console.print(f"[bold red]❌ Failed to generate batch report:[/bold red] {e}")
+
         console.print(Rule(style="bold green"))
         console.print(f"[bold green]🎉 Batch processing complete![/bold green]")
         console.print(f"Processed [bold]{len(pending_rows)}[/bold] videos")
@@ -187,7 +238,7 @@ class BatchOrchestrator:
         base_user_request: str,
         csv_path: str,
         video_processor
-    ) -> None:
+    ):
         """Process a single CSV row.
         
         Args:
@@ -197,6 +248,9 @@ class BatchOrchestrator:
             base_user_request: Base template for user requests
             csv_path: Path to CSV file
             video_processor: Callable that processes a single video
+
+        Returns:
+            The VideoProcessingResult or None if failed.
         """
         logger.info("=" * 60)
         logger.info(f"PROCESSING VIDEO {idx}/{total}")
@@ -212,7 +266,7 @@ class BatchOrchestrator:
         
         # Process the video
         try:
-            output_dir = video_processor(
+            result = video_processor(
                 enriched_request,
                 self.director,
                 self.cinematographer,
@@ -222,7 +276,7 @@ class BatchOrchestrator:
                 reference_pose_index=idx - 1  # Convert to 0-based index for cycling
             )
             
-            logger.info(f"✅ Video {idx}/{total} completed: {output_dir}")
+            logger.info(f"✅ Video {idx}/{total} completed: {result.output_dir}")
             console.print(f"[bold green]✅ Video {idx}/{total} completed![/bold green]")
             
             # Mark as completed in CSV
@@ -231,7 +285,10 @@ class BatchOrchestrator:
                 logger.info(f"Updated CSV row {csv_row.row_index} to Created=TRUE")
                 console.print(f"[italic gray]📝 Updated CSV: Row {csv_row.row_index} marked as complete[/italic gray]")
             
+            return result
+
         except Exception as e:
             logger.error(f"❌ Failed to process video {idx}/{total}: {e}", exc_info=True)
             console.print(f"[bold red]❌ Failed to process video {idx}/{total}:[/bold red] {e}")
             console.print("[yellow]Continuing with next video...[/yellow]\n")
+            return None

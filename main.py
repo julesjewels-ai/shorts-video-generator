@@ -11,8 +11,9 @@ from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
+from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.services.batch_orchestrator import BatchOrchestrator
-from dance_loop_gen.services.video_processor import VideoProcessor
+from dance_loop_gen.services.video_processor import VideoProcessor, VideoProcessingResult
 from dance_loop_gen.utils.prompt_loader import PromptLoader
 from dance_loop_gen.utils.logger import setup_logger, save_state, get_run_dir, console
 from rich.panel import Panel
@@ -37,11 +38,13 @@ def initialize_services(client: genai.Client) -> tuple:
         cinematographer = CinematographerService(client)
         veo = VeoService()
         seo_specialist = SEOSpecialistService(client)
+        report_service = ReportService()
         batch_orchestrator = BatchOrchestrator(
             director,
             cinematographer,
             veo,
-            seo_specialist
+            seo_specialist,
+            report_service
         )
         logger.info("All services initialized")
     
@@ -132,7 +135,8 @@ def run_single_mode(
     }, logger)
     
     try:
-        output_dir = VideoProcessor.process(
+        # Note: VideoProcessor.process now returns a VideoProcessingResult object
+        result = VideoProcessor.process(
             base_user_request,
             director,
             cinematographer,
@@ -142,7 +146,7 @@ def run_single_mode(
         )
         
         console.print(Panel(
-            f"[bold green]Generation complete![/bold green]\n\n[bold]Output:[/bold] [cyan]{output_dir}[/cyan]",
+            f"[bold green]Generation complete![/bold green]\n\n[bold]Output:[/bold] [cyan]{result.output_dir}[/cyan]",
             title="Success",
             expand=False
         ))

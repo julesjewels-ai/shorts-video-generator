@@ -7,7 +7,8 @@ following SOLID principles by separating processing logic from orchestration.
 import os
 import re
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, List
+from pydantic import BaseModel
 from dance_loop_gen.config import Config
 from dance_loop_gen.core.models import CSVRow
 from dance_loop_gen.services.director import DirectorService
@@ -17,6 +18,16 @@ from dance_loop_gen.services.seo_specialist import SEOSpecialistService
 from dance_loop_gen.utils.logger import setup_logger, save_state
 
 logger = setup_logger()
+
+class VideoProcessingResult(BaseModel):
+    """Encapsulates the result of a video processing run."""
+    output_dir: str
+    plan_title: str
+    plan_description: str
+    scene_count: int
+    tags: List[str]
+    assets: Dict[str, str]
+    recommended_metadata_option: Optional[int] = None
 
 
 class VideoProcessor:
@@ -31,7 +42,7 @@ class VideoProcessor:
         seo_specialist: SEOSpecialistService,
         csv_row: Optional[CSVRow] = None,
         reference_pose_index: int = 0
-    ) -> str:
+    ) -> VideoProcessingResult:
         """Process a single video generation from start to finish.
         
         Args:
@@ -44,7 +55,7 @@ class VideoProcessor:
             reference_pose_index: Index for selecting reference pose (for batch iteration)
             
         Returns:
-            Path to the output directory
+            VideoProcessingResult object containing generation details.
             
         Raises:
             Exception if video generation fails
@@ -95,7 +106,7 @@ class VideoProcessor:
         veo.generate_instructions(project_plan, keyframe_assets, output_dir=run_output_dir)
         
         # 5. Generate SEO Metadata
-        VideoProcessor._generate_metadata(
+        recommended_metadata_option = VideoProcessor._generate_metadata(
             project_plan,
             seo_specialist,
             run_output_dir
@@ -109,7 +120,15 @@ class VideoProcessor:
             "plan_title": project_plan.title
         }, logger)
         
-        return run_output_dir
+        return VideoProcessingResult(
+            output_dir=run_output_dir,
+            plan_title=project_plan.title,
+            plan_description=project_plan.description,
+            scene_count=len(project_plan.scenes),
+            tags=project_plan.backend_tags,
+            assets=keyframe_assets,
+            recommended_metadata_option=recommended_metadata_option
+        )
     
     @staticmethod
     def _create_output_directory(title: str) -> str:
@@ -133,13 +152,16 @@ class VideoProcessor:
         project_plan,
         seo_specialist: SEOSpecialistService,
         output_dir: str
-    ) -> None:
+    ) -> Optional[int]:
         """Generate SEO metadata for the video.
         
         Args:
             project_plan: The video plan
             seo_specialist: SEO Specialist service instance
             output_dir: Output directory for metadata files
+
+        Returns:
+            The recommended option number if successful, None otherwise.
         """
         logger.info("Generating metadata alternatives via SEO Specialist...")
         try:
@@ -160,7 +182,9 @@ class VideoProcessor:
                 "reasoning": metadata_alternatives.reasoning
             }, logger)
             
+            return metadata_alternatives.recommended
+
         except Exception as e:
             logger.error(f"Failed to generate metadata: {e}", exc_info=True)
             print(f"⚠️ Warning: Failed to generate metadata alternatives: {e}")
-            # Don't raise - metadata is optional, continue with what we have
+            return None

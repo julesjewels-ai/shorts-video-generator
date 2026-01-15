@@ -2,7 +2,8 @@ import csv
 import io
 import json
 import os
-from typing import Tuple
+from pathlib import Path
+from typing import Optional, Tuple
 
 from google import genai
 from google.genai import types
@@ -70,11 +71,28 @@ class SEOSpecialistService:
         logger.info(f"Loaded metadata config: language={language}, keywords={target_keywords is not None}, spreadsheet={spreadsheet_content is not None}")
         return config
 
-    def _load_spreadsheet(self, path: str) -> str:
-        """Load spreadsheet content as raw string."""
+    def _load_spreadsheet(self, path: str) -> Optional[str]:
+        """
+        Load spreadsheet content as raw string.
+        Securely handles paths to prevent traversal attacks.
+        """
         logger.info(f"Loading spreadsheet from: {path}")
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            # Resolve the absolute path
+            file_path = Path(path).resolve()
+            prompts_dir = Path(Config.PROMPTS_DIR).resolve()
+
+            # Ensure the path is within the prompts directory
+            # relative_to raises ValueError if file_path is not in prompts_dir
+            if not file_path.is_relative_to(prompts_dir):
+                logger.error(f"Security event: Path traversal attempt detected: {path}")
+                return None
+
+            if not file_path.exists():
+                logger.error(f"File not found: {path}")
+                return None
+
+            with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             logger.debug(f"Loaded spreadsheet content ({len(content)} chars)")
             return content

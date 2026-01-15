@@ -5,13 +5,15 @@ following the Single Responsibility Principle by separating batch logic from mai
 """
 
 import os
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from dance_loop_gen.config import Config
 from dance_loop_gen.core.models import CSVRow
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
+if TYPE_CHECKING:
+    from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.utils.csv_handler import CSVHandler
 from dance_loop_gen.utils.request_builder import build_request_from_csv
 from dance_loop_gen.utils.logger import setup_logger, console
@@ -29,7 +31,8 @@ class BatchOrchestrator:
         director: DirectorService,
         cinematographer: CinematographerService,
         veo: VeoService,
-        seo_specialist: SEOSpecialistService
+        seo_specialist: SEOSpecialistService,
+        report_service: Optional['ReportService'] = None
     ):
         """Initialize the batch orchestrator.
         
@@ -38,11 +41,13 @@ class BatchOrchestrator:
             cinematographer: Cinematographer service instance
             veo: Veo service instance
             seo_specialist: SEO Specialist service instance
+            report_service: Optional ReportService instance
         """
         self.director = director
         self.cinematographer = cinematographer
         self.veo = veo
         self.seo_specialist = seo_specialist
+        self.report_service = report_service
     
     def resolve_csv_path(self, csv_path: str) -> Optional[str]:
         """Resolve CSV path to absolute path.
@@ -219,7 +224,8 @@ class BatchOrchestrator:
                 self.veo,
                 self.seo_specialist,
                 csv_row,
-                reference_pose_index=idx - 1  # Convert to 0-based index for cycling
+                reference_pose_index=idx - 1,  # Convert to 0-based index for cycling
+                report_service=self.report_service
             )
             
             logger.info(f"✅ Video {idx}/{total} completed: {output_dir}")

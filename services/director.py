@@ -1,8 +1,9 @@
-from typing import Dict, Any
+from typing import Dict, Any, AsyncIterator
 from google import genai
 from google.genai import types
 from ..core.interfaces import IDirector
 from ..core.models import VideoPlan
+from ..core.stream_models import StreamChunk, StreamChunkType
 from ..config import Config
 from ..utils.prompt_loader import PromptLoader
 from ..utils.logger import setup_logger, save_state
@@ -174,4 +175,84 @@ class DirectorService(IDirector):
             }, logger)
             
             print(f"❌ Error generating plan: {e}")
+            raise
+
+    async def generate_plan_stream(self, user_input: str) -> AsyncIterator[StreamChunk]:
+        """Generates a video plan with streaming output.
+
+        Yields chunks of type THOUGHT, TEXT, or RESULT.
+        """
+        import asyncio
+        from functools import partial
+
+        logger.info(f"generate_plan_stream called with input length: {len(user_input)} chars")
+
+        # 1. Build Config
+        gen_config_args = self._build_generation_config()
+        self._log_and_save_config(gen_config_args, len(user_input))
+
+        config = types.GenerateContentConfig(**gen_config_args)
+
+        full_text = ""
+
+        try:
+            logger.info("Calling Gemini API for streaming plan generation...")
+
+            # Since generate_content_stream is synchronous, we run the iteration in a thread
+            # and yield items back to the async loop via a queue.
+
+            loop = asyncio.get_event_loop()
+            queue = asyncio.Queue()
+
+            def run_stream():
+                try:
+                    stream = self.client.models.generate_content_stream(
+                        model=Config.MODEL_NAME_TEXT,
+                        contents=user_input,
+                        config=config,
+                    )
+                    for chunk in stream:
+                        text_part = chunk.text
+                        if text_part:
+                            loop.call_soon_threadsafe(queue.put_nowait, StreamChunk(type=StreamChunkType.TEXT, content=text_part))
+
+                    loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
+                except Exception as e:
+                    loop.call_soon_threadsafe(queue.put_nowait, e)
+
+            # Run the blocking stream in a thread
+            # We don't await run_in_executor here because we want to consume the queue in parallel
+            # actually, run_in_executor returns a Future, which we can await if we want to wait for completion
+            # BUT, we want to read from the queue AS it is being populated.
+            # So we launch the task in executor and do not await it immediately.
+
+            stream_future = loop.run_in_executor(None, run_stream)
+
+            # Consumer loop
+            while True:
+                # We need to break if the future is done AND queue is empty
+                # But queue.get() waits.
+
+                # Simple logic: wait for queue items until None is received.
+                item = await queue.get()
+                if item is None:
+                    break
+
+                if isinstance(item, Exception):
+                    raise item
+
+                yield item
+                if item.type == StreamChunkType.TEXT:
+                    full_text += item.content
+
+            # Ensure the future is done (it should be if we got None)
+            await stream_future
+
+            # 2. Parse and Save Plan
+            plan = self._parse_and_save_plan(full_text)
+            yield StreamChunk(type=StreamChunkType.RESULT, data=plan)
+
+        except Exception as e:
+            logger.error(f"Error generating plan stream: {e}", exc_info=True)
+            yield StreamChunk(type=StreamChunkType.ERROR, content=str(e))
             raise

@@ -6,7 +6,7 @@ class PromptLoader:
     @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
-        from ..config import Config  # Lazy import to avoid circular dependency
+        from config import Config  # Lazy import to avoid circular dependency
         
         path = os.path.join(Config.PROMPTS_DIR, filename)
         if not os.path.exists(path):
@@ -47,7 +47,7 @@ class PromptLoader:
         Returns:
             Tuple of (image_bytes, mime_type) if file exists, None otherwise.
         """
-        from ..config import Config  # Lazy import to avoid circular dependency
+        from config import Config  # Lazy import to avoid circular dependency
         
         path = os.path.join(Config.PROMPTS_DIR, filename)
         
@@ -139,7 +139,7 @@ class PromptLoader:
             List of tuples of (image_bytes, mime_type), sorted by filename.
             Empty list if no matching files found.
         """
-        from ..config import Config  # Lazy import to avoid circular dependency
+        from config import Config  # Lazy import to avoid circular dependency
         import glob
         
         # Build search pattern for numbered files

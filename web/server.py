@@ -20,6 +20,7 @@ from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
 from dance_loop_gen.services.batch_orchestrator import BatchOrchestrator
 from dance_loop_gen.services.video_processor import VideoProcessor
+from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.utils.prompt_loader import PromptLoader
 from dance_loop_gen.utils.logger import setup_logger, get_run_dir
 from dance_loop_gen.web.api_models import (
@@ -78,8 +79,9 @@ def get_services():
     cinematographer = CinematographerService(client)
     veo = VeoService()
     seo_specialist = SEOSpecialistService(client)
-    batch_orchestrator = BatchOrchestrator(director, cinematographer, veo, seo_specialist)
-    return director, cinematographer, veo, seo_specialist, batch_orchestrator
+    report_service = ReportService()
+    batch_orchestrator = BatchOrchestrator(director, cinematographer, veo, seo_specialist, report_service)
+    return director, cinematographer, veo, seo_specialist, batch_orchestrator, report_service
 
 # Custom Logger Interceptor for Web Progress
 class WebLogHandler(logging.Handler):
@@ -204,7 +206,7 @@ async def run_generation_task(req: GenerateSingleRequest):
     logging.getLogger("dance_loop_gen").addHandler(handler)
     
     try:
-        director, cinematographer, veo, seo_specialist, _ = get_services()
+        director, cinematographer, veo, seo_specialist, _, report_service = get_services()
         user_request = req.user_request or PromptLoader.load("default_user_request.txt")
         
         # Start progress
@@ -222,7 +224,8 @@ async def run_generation_task(req: GenerateSingleRequest):
             cinematographer,
             veo,
             seo_specialist,
-            reference_pose_index=req.reference_pose_index
+            reference_pose_index=req.reference_pose_index,
+            report_service=report_service
         )
         
         # Mark complete

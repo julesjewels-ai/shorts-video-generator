@@ -13,6 +13,7 @@ from dance_loop_gen.services.veo import VeoService
 from dance_loop_gen.services.seo_specialist import SEOSpecialistService
 from dance_loop_gen.services.batch_orchestrator import BatchOrchestrator
 from dance_loop_gen.services.video_processor import VideoProcessor
+from dance_loop_gen.services.report_service import ReportService
 from dance_loop_gen.utils.prompt_loader import PromptLoader
 from dance_loop_gen.utils.logger import setup_logger, save_state, get_run_dir, console
 from rich.panel import Panel
@@ -37,11 +38,13 @@ def initialize_services(client: genai.Client) -> tuple:
         cinematographer = CinematographerService(client)
         veo = VeoService()
         seo_specialist = SEOSpecialistService(client)
+        report_service = ReportService()
         batch_orchestrator = BatchOrchestrator(
             director,
             cinematographer,
             veo,
-            seo_specialist
+            seo_specialist,
+            report_service
         )
         logger.info("All services initialized")
     
@@ -60,7 +63,7 @@ def initialize_services(client: genai.Client) -> tuple:
             console.print(Panel("[bold magenta]🎯 SINGLE VIDEO MODE[/bold magenta]", border_style="magenta"))
             logger.info("Application starting in Single Mode")
             
-    return director, cinematographer, veo, seo_specialist, batch_orchestrator
+    return director, cinematographer, veo, seo_specialist, batch_orchestrator, report_service
 
 
 def validate_and_log_config():
@@ -109,7 +112,8 @@ def run_single_mode(
     director: DirectorService,
     cinematographer: CinematographerService,
     veo: VeoService,
-    seo_specialist: SEOSpecialistService
+    seo_specialist: SEOSpecialistService,
+    report_service: ReportService
 ):
     """Run application in single video generation mode.
     
@@ -119,6 +123,7 @@ def run_single_mode(
         cinematographer: Cinematographer service instance
         veo: Veo service instance
         seo_specialist: SEO Specialist service instance
+        report_service: Report service instance
     """
     logger.info("=" * 60)
     logger.info("SINGLE PROCESSING MODE")
@@ -138,7 +143,9 @@ def run_single_mode(
             cinematographer,
             veo,
             seo_specialist,
-            None
+            None,
+            reference_pose_index=0,
+            report_service=report_service
         )
         
         console.print(Panel(
@@ -206,7 +213,7 @@ def main():
     logger.info("Gemini client initialized successfully")
     
     # Step 3: Initialize Services
-    director, cinematographer, veo, seo_specialist, batch_orchestrator = \
+    director, cinematographer, veo, seo_specialist, batch_orchestrator, report_service = \
         initialize_services(client)
     
     # Step 4: Load Base User Request
@@ -221,7 +228,8 @@ def main():
             director,
             cinematographer,
             veo,
-            seo_specialist
+            seo_specialist,
+            report_service
         )
 
 

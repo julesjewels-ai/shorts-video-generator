@@ -124,6 +124,161 @@ class CinematographerService(ICinematographer):
             
         return None
 
+    def _generate_keyframe_a(self, plan: VideoPlan, reference_pose_index: int):
+        """Generates the master keyframe (A) with optional reference pose."""
+        logger.info("--- Generating Keyframe A (Master) ---")
+        prompt_a = PromptLoader.load_formatted(
+            "cinematographer_master.txt",
+            setting_desc=plan.setting_desc,
+            character_leader_desc=plan.character_leader_desc,
+            character_follower_desc=plan.character_follower_desc,
+            action=plan.scenes[0].start_pose_description
+        )
+
+        # Build contents for API call with selected reference pose
+        if self.reference_poses:
+            # Select reference pose based on index (cycle if needed)
+            pose_idx = reference_pose_index % len(self.reference_poses)
+            image_bytes, mime_type = self.reference_poses[pose_idx]
+
+            logger.info(f"Using reference pose {pose_idx + 1}/{len(self.reference_poses)}")
+
+            # Add instruction to use the reference pose
+            reference_instruction = (
+                "\n\nIMPORTANT: Use the attached reference image as a guide for:\n"
+                "- The FRAMING and COMPOSITION (shot type, camera angle, how much of the frame the dancers occupy)\n"
+                "- The position and pose of the dancers\n"
+                "- The body positions and spatial arrangement\n"
+                "Apply the character descriptions and setting from above while maintaining the reference image's framing and pose structure."
+            )
+            prompt_a_with_ref = prompt_a + reference_instruction
+
+            contents_a = [
+                prompt_a_with_ref,
+                types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
+            ]
+            logger.debug(f"Prompt A (with reference) length: {len(prompt_a_with_ref)} chars")
+        else:
+            contents_a = prompt_a
+            logger.debug(f"Prompt A length: {len(prompt_a)} chars")
+
+        logger.debug(f"Prompt A preview: {prompt_a[:200]}...")
+
+        save_state("cinematographer_keyframe_a_prompt", {
+            "prompt": prompt_a,
+            "prompt_length": len(prompt_a),
+            "has_reference_pose": len(self.reference_poses) > 0,
+            "reference_pose_index": reference_pose_index if self.reference_poses else None
+        }, logger)
+
+        print("   Generating Keyframe A (Master)...")
+        if self.reference_poses:
+            pose_idx = reference_pose_index % len(self.reference_poses)
+            print(f"   📷 Using reference pose {pose_idx + 1}/{len(self.reference_poses)}")
+        logger.info(f"Calling Gemini API for Keyframe A (model: {Config.MODEL_NAME_IMAGE})")
+
+        response_a = self.client.models.generate_content(
+            model=Config.MODEL_NAME_IMAGE,
+            contents=contents_a,
+            config=types.GenerateContentConfig(
+                image_config=types.ImageConfig(aspect_ratio="9:16")
+            )
+        )
+
+        logger.info("Keyframe A API response received")
+        logger.debug(f"Response parts count: {len(response_a.parts)}")
+
+        part_a = [p for p in response_a.parts if p.inline_data][0]
+        path_a = self._save_image(part_a, "keyframe_A.png")
+
+        save_state("cinematographer_keyframe_a_complete", {
+            "path": path_a,
+            "status": "success"
+        }, logger)
+
+        return path_a, response_a
+
+    def _generate_sequential_keyframes(self, plan: VideoPlan, previous_response, variety_instruction: str) -> Dict[str, str]:
+        """Generates sequential keyframes (B, C, D...) based on history."""
+        assets = {}
+        # Initialize history and previous response for the loop
+        current_history = None
+        previous_response_parts = previous_response.parts
+
+        # Map indices to Keyframe letters
+        keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+
+        # Process remaining scenes (B, C, D...)
+        for i, scene in enumerate(plan.scenes[1:], start=1):
+            if i >= len(keyframe_letters):
+                logger.warning(f"Scene index {i} exceeds supported keyframe letters. Skipping.")
+                break
+
+            keyframe_letter = keyframe_letters[i]
+            logger.info(f"--- Generating Keyframe {keyframe_letter} (via Editing) ---")
+
+            # Load edit prompt
+            prompt_edit = PromptLoader.load_formatted(
+                "cinematographer_edit.txt",
+                pose_description=scene.start_pose_description,
+                variety_instruction=variety_instruction
+            )
+
+            logger.debug(f"Prompt {keyframe_letter} length: {len(prompt_edit)} chars")
+
+            print(f"   Generating Keyframe {keyframe_letter} (via Editing)...")
+
+            # Special handling for Keyframe B: Reset history to exclude reference pose
+            if keyframe_letter == 'B':
+                # Create a new prompt that describes the previous scene (A) without reference pose
+                prompt_base = PromptLoader.load_formatted(
+                    "cinematographer_master.txt",
+                    setting_desc=plan.setting_desc,
+                    character_leader_desc=plan.character_leader_desc,
+                    character_follower_desc=plan.character_follower_desc,
+                    action=plan.scenes[0].start_pose_description
+                )
+
+                # Build NEW conversation history
+                current_history = [
+                    types.Content(role="user", parts=[types.Part(text=prompt_base)]),
+                    types.Content(role="model", parts=previous_response_parts),
+                    types.Content(role="user", parts=[types.Part(text=prompt_edit)])
+                ]
+                logger.debug("History reset for Keyframe B (without reference pose)")
+
+            else:
+                # Append to existing history
+                current_history.extend([
+                    types.Content(role="model", parts=previous_response_parts),
+                    types.Content(role="user", parts=[types.Part(text=prompt_edit)])
+                ])
+
+            logger.debug(f"History length: {len(current_history)} messages")
+
+            # Generate content
+            response = self.client.models.generate_content(
+                model=Config.MODEL_NAME_IMAGE,
+                contents=list(current_history)
+            )
+
+            logger.info(f"Keyframe {keyframe_letter} API response received")
+
+            # Save asset
+            part = [p for p in response.parts if p.inline_data][0]
+            path = self._save_image(part, f"keyframe_{keyframe_letter}.png")
+            assets[keyframe_letter] = path
+
+            save_state(f"cinematographer_keyframe_{keyframe_letter.lower()}_complete", {
+                "path": path,
+                "status": "success"
+            }, logger)
+
+            # Update for next iteration
+            previous_response_parts = response.parts
+
+        return assets
+
     def generate_assets(self, plan: VideoPlan, output_dir: str = None, scene_variety: int = None, reference_pose_index: int = 0) -> Dict[str, str]:
         logger.info("=" * 40)
         logger.info("Cinematographer: Starting asset generation")
@@ -160,152 +315,12 @@ class CinematographerService(ICinematographer):
             assets = {}
             
             # 1. GENERATE KEYFRAME A (The Anchor)
-            logger.info("--- Generating Keyframe A (Master) ---")
-            prompt_a = PromptLoader.load_formatted(
-                "cinematographer_master.txt",
-                setting_desc=plan.setting_desc,
-                character_leader_desc=plan.character_leader_desc,
-                character_follower_desc=plan.character_follower_desc,
-                action=plan.scenes[0].start_pose_description
-            )
-            
-            # Build contents for API call with selected reference pose
-            if self.reference_poses:
-                # Select reference pose based on index (cycle if needed)
-                pose_idx = reference_pose_index % len(self.reference_poses)
-                image_bytes, mime_type = self.reference_poses[pose_idx]
-                
-                logger.info(f"Using reference pose {pose_idx + 1}/{len(self.reference_poses)}")
-                
-                # Add instruction to use the reference pose
-                reference_instruction = (
-                    "\n\nIMPORTANT: Use the attached reference image as a guide for:\n"
-                    "- The FRAMING and COMPOSITION (shot type, camera angle, how much of the frame the dancers occupy)\n"
-                    "- The position and pose of the dancers\n"
-                    "- The body positions and spatial arrangement\n"
-                    "Apply the character descriptions and setting from above while maintaining the reference image's framing and pose structure."
-                )
-                prompt_a_with_ref = prompt_a + reference_instruction
-                
-                contents_a = [
-                    prompt_a_with_ref,
-                    types.Part.from_bytes(data=image_bytes, mime_type=mime_type)
-                ]
-                logger.debug(f"Prompt A (with reference) length: {len(prompt_a_with_ref)} chars")
-            else:
-                contents_a = prompt_a
-                logger.debug(f"Prompt A length: {len(prompt_a)} chars")
-            
-            logger.debug(f"Prompt A preview: {prompt_a[:200]}...")
-            
-            save_state("cinematographer_keyframe_a_prompt", {
-                "prompt": prompt_a,
-                "prompt_length": len(prompt_a),
-                "has_reference_pose": len(self.reference_poses) > 0,
-                "reference_pose_index": reference_pose_index if self.reference_poses else None
-            }, logger)
-            
-            print("   Generating Keyframe A (Master)...")
-            if self.reference_poses:
-                pose_idx = reference_pose_index % len(self.reference_poses)
-                print(f"   📷 Using reference pose {pose_idx + 1}/{len(self.reference_poses)}")
-            logger.info(f"Calling Gemini API for Keyframe A (model: {Config.MODEL_NAME_IMAGE})")
-            
-            response_a = self.client.models.generate_content(
-                model=Config.MODEL_NAME_IMAGE,
-                contents=contents_a,
-                config=types.GenerateContentConfig(
-                    image_config=types.ImageConfig(aspect_ratio="9:16")
-                )
-            )
-            
-            logger.info("Keyframe A API response received")
-            logger.debug(f"Response parts count: {len(response_a.parts)}")
-            
-            part_a = [p for p in response_a.parts if p.inline_data][0]
-            path_a = self._save_image(part_a, "keyframe_A.png")
+            path_a, response_a = self._generate_keyframe_a(plan, reference_pose_index)
             assets['A'] = path_a
             
-            save_state("cinematographer_keyframe_a_complete", {
-                "path": path_a,
-                "status": "success"
-            }, logger)
-            
-            # Initialize history and previous response for the loop
-            current_history = None
-            previous_response_parts = response_a.parts
-            
-            # Map indices to Keyframe letters
-            keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-            
-            # Process remaining scenes (B, C, D...)
-            for i, scene in enumerate(plan.scenes[1:], start=1):
-                if i >= len(keyframe_letters):
-                    logger.warning(f"Scene index {i} exceeds supported keyframe letters. Skipping.")
-                    break
-
-                keyframe_letter = keyframe_letters[i]
-                logger.info(f"--- Generating Keyframe {keyframe_letter} (via Editing) ---")
-
-                # Load edit prompt
-                prompt_edit = PromptLoader.load_formatted(
-                    "cinematographer_edit.txt",
-                    pose_description=scene.start_pose_description,
-                    variety_instruction=variety_instruction
-                )
-
-                logger.debug(f"Prompt {keyframe_letter} length: {len(prompt_edit)} chars")
-
-                print(f"   Generating Keyframe {keyframe_letter} (via Editing)...")
-
-                # Special handling for Keyframe B: Reset history to exclude reference pose
-                if keyframe_letter == 'B':
-                    # Create a new prompt that describes the previous scene (A) without reference pose
-                    prompt_base = PromptLoader.load_formatted(
-                        "cinematographer_master.txt",
-                        setting_desc=plan.setting_desc,
-                        character_leader_desc=plan.character_leader_desc,
-                        character_follower_desc=plan.character_follower_desc,
-                        action=plan.scenes[0].start_pose_description
-                    )
-
-                    # Build NEW conversation history
-                    current_history = [
-                        types.Content(role="user", parts=[types.Part(text=prompt_base)]),
-                        types.Content(role="model", parts=previous_response_parts),
-                        types.Content(role="user", parts=[types.Part(text=prompt_edit)])
-                    ]
-                    logger.debug("History reset for Keyframe B (without reference pose)")
-
-                else:
-                    # Append to existing history
-                    current_history.extend([
-                        types.Content(role="model", parts=previous_response_parts),
-                        types.Content(role="user", parts=[types.Part(text=prompt_edit)])
-                    ])
-
-                logger.debug(f"History length: {len(current_history)} messages")
-
-                # Generate content
-                response = self.client.models.generate_content(
-                    model=Config.MODEL_NAME_IMAGE,
-                    contents=list(current_history)
-                )
-
-                logger.info(f"Keyframe {keyframe_letter} API response received")
-
-                # Save asset
-                part = [p for p in response.parts if p.inline_data][0]
-                path = self._save_image(part, f"keyframe_{keyframe_letter}.png")
-                assets[keyframe_letter] = path
-
-                save_state(f"cinematographer_keyframe_{keyframe_letter.lower()}_complete", {
-                    "path": path,
-                    "status": "success"
-                }, logger)
-
-                # Update for next iteration
-                previous_response_parts = response.parts
+            # 2. GENERATE SEQUENTIAL KEYFRAMES
+            sequential_assets = self._generate_sequential_keyframes(plan, response_a, variety_instruction)
+            assets.update(sequential_assets)
 
             logger.info("=" * 40)
             logger.info("Cinematographer: All keyframes generated successfully")

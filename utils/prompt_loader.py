@@ -1,14 +1,46 @@
 import os
 import mimetypes
+from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
 class PromptLoader:
+    @staticmethod
+    def _safe_join(base_dir: str, *paths: str) -> str:
+        """Safely joins paths and ensures the result is within base_dir.
+
+        Args:
+            base_dir: The trusted base directory.
+            *paths: Path components to join.
+
+        Returns:
+            The resolved absolute path as a string.
+
+        Raises:
+            ValueError: If the resulting path traverses outside base_dir.
+        """
+        # Convert to absolute resolved paths
+        base_path = Path(base_dir).resolve()
+
+        # Join components and resolve
+        unsafe_path = base_path.joinpath(*paths)
+        final_path = unsafe_path.resolve()
+
+        # Check if final path is within base path
+        try:
+            final_path.relative_to(base_path)
+        except ValueError:
+            raise ValueError(f"Security Alert: Path traversal attempt detected. '{final_path}' is not within '{base_path}'")
+
+        return str(final_path)
+
     @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
         from ..config import Config  # Lazy import to avoid circular dependency
         
-        path = os.path.join(Config.PROMPTS_DIR, filename)
+        # This will raise ValueError on path traversal, which is the intended security behavior
+        path = PromptLoader._safe_join(Config.PROMPTS_DIR, filename)
+
         if not os.path.exists(path):
             raise FileNotFoundError(f"Prompt file not found: {path}")
             
@@ -31,8 +63,12 @@ class PromptLoader:
         try:
             content = PromptLoader.load(filename)
             return content if content.strip() else None
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
+            # Swallow ValueError from safe_join to safely return None on traversal attempts for optional files.
+            # While traversal attempts are suspicious, optional loading should not crash the application.
             return None
+        except Exception:
+             return None
 
     @staticmethod
     def load_optional_image(filename: str) -> Optional[Tuple[bytes, str]]:
@@ -49,19 +85,29 @@ class PromptLoader:
         """
         from ..config import Config  # Lazy import to avoid circular dependency
         
-        path = os.path.join(Config.PROMPTS_DIR, filename)
-        
+        try:
+            path = PromptLoader._safe_join(Config.PROMPTS_DIR, filename)
+        except ValueError:
+             # Traversal attempt on image load
+             return None
+
         # Check for exact match first
         if not os.path.exists(path):
             # If it's a generic request without extension, try common ones
             base, ext = os.path.splitext(filename)
             if not ext:
+                found = False
                 for target_ext in [".png", ".jpg", ".jpeg"]:
-                    test_path = path + target_ext
-                    if os.path.exists(test_path):
-                        path = test_path
-                        break
-                else:
+                    try:
+                        # Try to join again safely
+                        test_path = PromptLoader._safe_join(Config.PROMPTS_DIR, filename + target_ext)
+                        if os.path.exists(test_path):
+                            path = test_path
+                            found = True
+                            break
+                    except ValueError:
+                        continue
+                if not found:
                     return None
             else:
                 return None
@@ -91,8 +137,11 @@ class PromptLoader:
             return []
             
         matching_files = []
+
         for ext in [".png", ".jpg", ".jpeg", ".jpe", ".webp"]:
             import glob
+            # Glob search is not recursive unless recursive=True is used, so simple *ext is fine.
+            # Since we search inside 'directory', if 'directory' is safe, results are safe.
             search_pattern = os.path.join(directory, f"*{ext}")
             matching_files.extend(glob.glob(search_pattern))
             # Also try uppercase extensions
@@ -142,9 +191,16 @@ class PromptLoader:
         from ..config import Config  # Lazy import to avoid circular dependency
         import glob
         
+        # Sanitize pattern to prevent traversal in pattern (e.g. "../secret")
+        # Although glob handles paths, ensure pattern is just a filename stem.
+        if ".." in pattern or "/" in pattern or "\\" in pattern:
+             return []
+
         # Build search pattern for numbered files
         matching_files = []
         for ext in ["png", "jpg", "jpeg", "jpe"]:
+            # We construct the search pattern.
+            # Note: glob.glob with absolute path returns absolute paths.
             search_pattern = os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
             matching_files.extend(glob.glob(search_pattern))
         
@@ -160,7 +216,13 @@ class PromptLoader:
             mime_type, _ = mimetypes.guess_type(path)
             if not mime_type or not mime_type.startswith('image/'):
                 continue
-                
+
+            # Additional safety: ensure the found file is indeed in PROMPTS_DIR
+            try:
+                PromptLoader._safe_join(Config.PROMPTS_DIR, os.path.basename(path))
+            except ValueError:
+                continue
+
             try:
                 with open(path, "rb") as f:
                     image_bytes = f.read()
@@ -171,5 +233,3 @@ class PromptLoader:
                 continue
                 
         return images
-
-

@@ -7,13 +7,14 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from google import genai
 from pydantic import BaseModel
 
 from dance_loop_gen.config import Config
+from dance_loop_gen.core.stream_models import StreamChunk
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
@@ -73,8 +74,14 @@ class ProgressManager:
 progress_manager = ProgressManager()
 
 # Service initialization helper
+def get_genai_client() -> genai.Client:
+    return genai.Client(http_options={'api_version': Config.GEMINI_VERSION})
+
+def get_director_service(client: genai.Client = Depends(get_genai_client)) -> DirectorService:
+    return DirectorService(client)
+
 def get_services():
-    client = genai.Client(http_options={'api_version': Config.GEMINI_VERSION})
+    client = get_genai_client()
     director = DirectorService(client)
     cinematographer = CinematographerService(client)
     veo = VeoService()
@@ -197,6 +204,34 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text() # Keep alive
     except WebSocketDisconnect:
         progress_manager.disconnect(websocket)
+
+@app.websocket("/ws/generate_stream")
+async def websocket_generate_stream(
+    websocket: WebSocket,
+    director: DirectorService = Depends(get_director_service)
+):
+    await websocket.accept()
+
+    try:
+        # Wait for initial request
+        data = await websocket.receive_text()
+        request_data = json.loads(data)
+        user_request = request_data.get("user_request", "")
+
+        # Call streaming method
+        async for chunk in director.generate_plan_stream(user_request):
+            # Convert Pydantic model to dict for JSON serialization
+            if chunk.data:
+                # If data is a Pydantic model
+                if hasattr(chunk.data, "model_dump"):
+                    chunk.data = chunk.data.model_dump()
+
+            await websocket.send_text(chunk.model_dump_json())
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        await websocket.send_json({"type": "error", "content": str(e)})
 
 async def run_generation_task(req: GenerateSingleRequest):
     """Background task to run video generation."""

@@ -109,43 +109,12 @@ class VideoProcessor:
         
         # 6. Generate Excel Report
         if report_service:
-            logger.info("Generating Excel Report...")
-            try:
-                # Map letter keys (A, B...) to scene indices (0, 1...)
-                # The assets dict has keys 'A', 'B', etc.
-                # The plan.scenes is a list.
-
-                rows = []
-                keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-
-                for i, scene in enumerate(project_plan.scenes):
-                    letter = keyframe_letters[i] if i < len(keyframe_letters) else "?"
-                    keyframe_path = keyframe_assets.get(letter)
-
-                    rows.append(ReportRow(
-                        scene_number=scene.scene_number,
-                        keyframe_path=keyframe_path,
-                        action_description=scene.action_description,
-                        audio_prompt=scene.audio_prompt,
-                        start_pose=scene.start_pose_description,
-                        end_pose=scene.end_pose_description,
-                        notes=""
-                    ))
-
-                report_data = ReportData(
-                    title=project_plan.title,
-                    generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    run_id=os.path.basename(run_output_dir),
-                    rows=rows
-                )
-
-                report_path = os.path.join(run_output_dir, "production_report.xlsx")
-                report_service.generate_report(report_data, report_path)
-                print(f"📊 Report generated: {report_path}")
-
-            except Exception as e:
-                logger.error(f"Failed to generate report: {e}", exc_info=True)
-                print(f"⚠️ Warning: Failed to generate Excel report: {e}")
+            VideoProcessor._generate_report(
+                project_plan,
+                keyframe_assets,
+                run_output_dir,
+                report_service
+            )
 
         # 7. Save Completion State
         save_state("08_complete", {
@@ -157,6 +126,59 @@ class VideoProcessor:
         
         return run_output_dir
     
+    @staticmethod
+    def _generate_report(
+        project_plan,
+        keyframe_assets: dict,
+        run_output_dir: str,
+        report_service: 'ReportService'
+    ) -> None:
+        """Generates the Excel report for the video plan.
+
+        Args:
+            project_plan: The video plan
+            keyframe_assets: Dictionary of generated keyframes
+            run_output_dir: Output directory
+            report_service: Report service instance
+        """
+        logger.info("Generating Excel Report...")
+        try:
+            # Map letter keys (A, B...) to scene indices (0, 1...)
+            # The assets dict has keys 'A', 'B', etc.
+            # The plan.scenes is a list.
+
+            rows = []
+            keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+
+            for i, scene in enumerate(project_plan.scenes):
+                letter = keyframe_letters[i] if i < len(keyframe_letters) else "?"
+                keyframe_path = keyframe_assets.get(letter)
+
+                rows.append(ReportRow(
+                    scene_number=scene.scene_number,
+                    keyframe_path=keyframe_path,
+                    action_description=scene.action_description,
+                    audio_prompt=scene.audio_prompt,
+                    start_pose=scene.start_pose_description,
+                    end_pose=scene.end_pose_description,
+                    notes=""
+                ))
+
+            report_data = ReportData(
+                title=project_plan.title,
+                generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                run_id=os.path.basename(run_output_dir),
+                rows=rows
+            )
+
+            report_path = os.path.join(run_output_dir, "production_report.xlsx")
+            report_service.generate_report(report_data, report_path)
+            print(f"📊 Report generated: {report_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to generate report: {e}", exc_info=True)
+            print(f"⚠️ Warning: Failed to generate Excel report: {e}")
+
     @staticmethod
     def _create_output_directory(title: str) -> str:
         """Create a run-specific output directory.

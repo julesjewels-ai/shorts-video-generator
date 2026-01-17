@@ -1,8 +1,10 @@
 from typing import Dict, Any
+from typing import Generator
 from google import genai
 from google.genai import types
 from ..core.interfaces import IDirector
 from ..core.models import VideoPlan
+from ..core.stream_models import StreamChunk, StreamChunkType
 from ..config import Config
 from ..utils.prompt_loader import PromptLoader
 from ..utils.logger import setup_logger, save_state
@@ -174,4 +176,49 @@ class DirectorService(IDirector):
             }, logger)
             
             print(f"❌ Error generating plan: {e}")
+            raise
+
+    def generate_plan_stream(self, user_input: str) -> Generator[StreamChunk, None, None]:
+        """Generates a video plan via Gemini API with streaming."""
+        logger.info(f"generate_plan_stream called with input length: {len(user_input)} chars")
+
+        # 1. Build Config
+        gen_config_args = self._build_generation_config()
+        self._log_and_save_config(gen_config_args, len(user_input))
+
+        config = types.GenerateContentConfig(**gen_config_args)
+
+        try:
+            logger.info("Calling Gemini API for streaming plan generation...")
+
+            # Use streaming API
+            response_stream = self.client.models.generate_content_stream(
+                model=Config.MODEL_NAME_TEXT,
+                contents=user_input,
+                config=config,
+            )
+
+            accumulated_text = ""
+
+            for chunk in response_stream:
+                if chunk.text:
+                    accumulated_text += chunk.text
+                    yield StreamChunk(type=StreamChunkType.TOKEN, content=chunk.text)
+
+            logger.info("Stream complete. Parsing accumulated text...")
+
+            # 2. Parse and Save Plan
+            plan = self._parse_and_save_plan(accumulated_text)
+
+            yield StreamChunk(type=StreamChunkType.PLAN, content=plan.model_dump())
+
+        except Exception as e:
+            logger.error(f"Error during streaming generation: {e}", exc_info=True)
+             # Save error state
+            save_state("director_stream_error", {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "model": Config.MODEL_NAME_TEXT,
+            }, logger)
+            yield StreamChunk(type=StreamChunkType.ERROR, content=str(e))
             raise

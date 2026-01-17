@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from google import genai
@@ -28,6 +28,7 @@ from dance_loop_gen.web.api_models import (
     GenerationStatus, GenerationProgress, GenerationResult,
     OutputRun, OutputRunDetail, KeyframeAsset, SceneInfo
 )
+from dance_loop_gen.core.stream_models import StreamChunk, StreamChunkType
 
 # Initialize app
 app = FastAPI(title="Dance Loop Generator")
@@ -197,6 +198,63 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text() # Keep alive
     except WebSocketDisconnect:
         progress_manager.disconnect(websocket)
+
+# Dependency
+def get_director_service():
+    client = genai.Client(http_options={'api_version': Config.GEMINI_VERSION})
+    return DirectorService(client)
+
+async def iterate_in_thread(sync_iterator):
+    """Iterates a synchronous iterator in a separate thread and yields items asynchronously."""
+    loop = asyncio.get_running_loop()
+    queue = asyncio.Queue()
+
+    def producer():
+        try:
+            for item in sync_iterator:
+                loop.call_soon_threadsafe(queue.put_nowait, item)
+            loop.call_soon_threadsafe(queue.put_nowait, None) # Sentinel
+        except Exception as e:
+            loop.call_soon_threadsafe(queue.put_nowait, e)
+
+    loop.run_in_executor(None, producer)
+
+    while True:
+        item = await queue.get()
+        if item is None:
+            break
+        if isinstance(item, Exception):
+            raise item
+        yield item
+
+@app.websocket("/ws/generate_stream")
+async def stream_generation(websocket: WebSocket, director: DirectorService = Depends(get_director_service)):
+    """
+    WebSocket endpoint for streaming the video planning process.
+    Receives JSON: {"user_request": "..."}
+    Sends JSON: StreamChunk (token, plan, log, error)
+    """
+    await websocket.accept()
+    try:
+        # 1. Receive Request
+        data = await websocket.receive_json()
+        user_request = data.get("user_request", "")
+
+        # 2. Stream Response (Non-blocking)
+        # We use a helper to iterate the sync generator in a thread pool
+        async for chunk in iterate_in_thread(director.generate_plan_stream(user_request)):
+            await websocket.send_json(chunk.model_dump())
+
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from streaming endpoint")
+    except Exception as e:
+        logger.error(f"Streaming error: {e}")
+        # Try to send error to client if still connected
+        try:
+            error_chunk = StreamChunk(type=StreamChunkType.ERROR, content=str(e))
+            await websocket.send_json(error_chunk.model_dump())
+        except:
+            pass
 
 async def run_generation_task(req: GenerateSingleRequest):
     """Background task to run video generation."""

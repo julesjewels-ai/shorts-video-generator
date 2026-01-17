@@ -15,3 +15,11 @@
 - `_generate_keyframe_a`: Encapsulated the master shot generation logic.
 - `_generate_sequential_keyframes`: Encapsulated the iterative editing loop and history management.
 **Delta:** Simplified the main `generate_assets` method to a high-level orchestration flow. Added comprehensive unit tests.
+
+## 2026-01-17 - Streaming Architecture
+**Observation:** `DirectorService` blocked generation until completion, and `server.py` lacked a mechanism for real-time feedback of the generation content.
+**Action:**
+- Created `core/stream_models.py` with `StreamChunk` Pydantic model.
+- Added `generate_plan_stream` to `DirectorService` and `IDirector`.
+- Implemented `/ws/generate_stream` in `web/server.py` using a non-blocking thread-pool iterator pattern for the synchronous service generator.
+**Delta:** Enabled real-time streaming of AI tokens to the user without blocking the event loop, following SOLID principles.

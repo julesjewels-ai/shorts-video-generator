@@ -113,3 +113,6 @@ class OutputRunDetail(BaseModel):
     scenes: List[SceneInfo]
     metadata: Optional[Dict[str, Any]] = None
     veo_instructions: Optional[Dict[str, Any]] = None
+
+class PlanRequest(BaseModel):
+    user_prompt: str

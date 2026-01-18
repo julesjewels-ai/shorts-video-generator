@@ -1,10 +1,15 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, Generator
 from .models import VideoPlan
+from .stream_models import StreamChunk
 
 class IDirector(ABC):
     @abstractmethod
     def generate_plan(self, user_input: str) -> VideoPlan:
+        pass
+
+    @abstractmethod
+    def generate_plan_stream(self, user_input: str) -> Generator[StreamChunk, None, None]:
         pass
 
 class ICinematographer(ABC):

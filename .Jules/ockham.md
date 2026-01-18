@@ -15,3 +15,9 @@
 - `_generate_keyframe_a`: Encapsulated the master shot generation logic.
 - `_generate_sequential_keyframes`: Encapsulated the iterative editing loop and history management.
 **Delta:** Simplified the main `generate_assets` method to a high-level orchestration flow. Added comprehensive unit tests.
+
+## 2026-01-15 - VideoProcessor Refactor
+**Observation:** `VideoProcessor.process` was becoming a "Long Function" (approx 100 lines) with mixed responsibilities, including inline report generation logic.
+**Action:** Refactored `VideoProcessor` by extracting:
+- `_generate_report`: Encapsulated Excel report data construction and service delegation.
+**Delta:** Reduced `process` method complexity. Added unit test `tests/test_video_processor.py`.

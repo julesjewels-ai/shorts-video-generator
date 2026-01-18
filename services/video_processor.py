@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from dance_loop_gen.config import Config
-from dance_loop_gen.core.models import CSVRow
+from dance_loop_gen.core.models import CSVRow, VideoPlan
 from dance_loop_gen.core.report_models import ReportData, ReportRow
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
@@ -109,43 +109,7 @@ class VideoProcessor:
         
         # 6. Generate Excel Report
         if report_service:
-            logger.info("Generating Excel Report...")
-            try:
-                # Map letter keys (A, B...) to scene indices (0, 1...)
-                # The assets dict has keys 'A', 'B', etc.
-                # The plan.scenes is a list.
-
-                rows = []
-                keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
-
-                for i, scene in enumerate(project_plan.scenes):
-                    letter = keyframe_letters[i] if i < len(keyframe_letters) else "?"
-                    keyframe_path = keyframe_assets.get(letter)
-
-                    rows.append(ReportRow(
-                        scene_number=scene.scene_number,
-                        keyframe_path=keyframe_path,
-                        action_description=scene.action_description,
-                        audio_prompt=scene.audio_prompt,
-                        start_pose=scene.start_pose_description,
-                        end_pose=scene.end_pose_description,
-                        notes=""
-                    ))
-
-                report_data = ReportData(
-                    title=project_plan.title,
-                    generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    run_id=os.path.basename(run_output_dir),
-                    rows=rows
-                )
-
-                report_path = os.path.join(run_output_dir, "production_report.xlsx")
-                report_service.generate_report(report_data, report_path)
-                print(f"📊 Report generated: {report_path}")
-
-            except Exception as e:
-                logger.error(f"Failed to generate report: {e}", exc_info=True)
-                print(f"⚠️ Warning: Failed to generate Excel report: {e}")
+            VideoProcessor._generate_report(project_plan, keyframe_assets, run_output_dir, report_service)
 
         # 7. Save Completion State
         save_state("08_complete", {
@@ -173,6 +137,49 @@ class VideoProcessor:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         return os.path.join(Config.OUTPUT_DIR, f"{safe_title}_{timestamp}")
+
+    @staticmethod
+    def _generate_report(
+        project_plan: VideoPlan,
+        keyframe_assets: dict,
+        run_output_dir: str,
+        report_service: 'ReportService'
+    ) -> None:
+        """Generate Excel report for the video plan."""
+        logger.info("Generating Excel Report...")
+        try:
+            # Map letter keys (A, B...) to scene indices (0, 1...)
+            rows = []
+            keyframe_letters = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
+
+            for i, scene in enumerate(project_plan.scenes):
+                letter = keyframe_letters[i] if i < len(keyframe_letters) else "?"
+                keyframe_path = keyframe_assets.get(letter)
+
+                rows.append(ReportRow(
+                    scene_number=scene.scene_number,
+                    keyframe_path=keyframe_path,
+                    action_description=scene.action_description,
+                    audio_prompt=scene.audio_prompt,
+                    start_pose=scene.start_pose_description,
+                    end_pose=scene.end_pose_description,
+                    notes=""
+                ))
+
+            report_data = ReportData(
+                title=project_plan.title,
+                generated_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                run_id=os.path.basename(run_output_dir),
+                rows=rows
+            )
+
+            report_path = os.path.join(run_output_dir, "production_report.xlsx")
+            report_service.generate_report(report_data, report_path)
+            print(f"📊 Report generated: {report_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to generate report: {e}", exc_info=True)
+            print(f"⚠️ Warning: Failed to generate Excel report: {e}")
     
     @staticmethod
     def _generate_metadata(

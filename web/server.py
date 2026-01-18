@@ -3,17 +3,19 @@ import asyncio
 import json
 import logging
 import zipfile
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Generator
 from pathlib import Path
 from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, UploadFile, File, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.concurrency import iterate_in_threadpool
 from google import genai
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from dance_loop_gen.config import Config
+from dance_loop_gen.core.stream_models import StreamChunk
 from dance_loop_gen.services.director import DirectorService
 from dance_loop_gen.services.cinematographer import CinematographerService
 from dance_loop_gen.services.veo import VeoService
@@ -26,7 +28,8 @@ from dance_loop_gen.utils.logger import setup_logger, get_run_dir
 from dance_loop_gen.web.api_models import (
     ConfigRequest, ConfigResponse, GenerateSingleRequest, 
     GenerationStatus, GenerationProgress, GenerationResult,
-    OutputRun, OutputRunDetail, KeyframeAsset, SceneInfo
+    OutputRun, OutputRunDetail, KeyframeAsset, SceneInfo,
+    PlanRequest
 )
 
 # Initialize app
@@ -82,6 +85,11 @@ def get_services():
     report_service = ReportService()
     batch_orchestrator = BatchOrchestrator(director, cinematographer, veo, seo_specialist, report_service)
     return director, cinematographer, veo, seo_specialist, batch_orchestrator, report_service
+
+# Dependency for DirectorService
+def get_director_service() -> DirectorService:
+    client = genai.Client(http_options={'api_version': Config.GEMINI_VERSION})
+    return DirectorService(client)
 
 # Custom Logger Interceptor for Web Progress
 class WebLogHandler(logging.Handler):
@@ -197,6 +205,50 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text() # Keep alive
     except WebSocketDisconnect:
         progress_manager.disconnect(websocket)
+
+@app.websocket("/ws/director/plan")
+async def websocket_director_plan(
+    websocket: WebSocket,
+    director: DirectorService = Depends(get_director_service)
+):
+    """Stream plan generation tokens to the client."""
+    await websocket.accept()
+
+    # 1. Receive prompt from client
+    data = await websocket.receive_text()
+
+    try:
+        # Validate input using Pydantic
+        request_data = PlanRequest.model_validate_json(data)
+        user_prompt = request_data.user_prompt
+
+        # 2. Stream generation
+        # Since director.generate_plan_stream is synchronous, we run it in threadpool
+        # and iterate over it asynchronously
+        iterator = director.generate_plan_stream(user_prompt)
+
+        async for chunk in iterate_in_threadpool(iterator):
+            # Send chunk as JSON
+            await websocket.send_text(chunk.model_dump_json())
+
+        # Close connection normally
+        await websocket.close()
+
+    except ValidationError as e:
+         error_chunk = StreamChunk(type="error", content=f"Invalid request format: {str(e)}")
+         await websocket.send_text(error_chunk.model_dump_json())
+         await websocket.close(code=1008) # Policy Violation
+    except WebSocketDisconnect:
+        # Client disconnected
+        pass
+    except Exception as e:
+        # Send error and close
+        error_chunk = StreamChunk(type="error", content=str(e))
+        try:
+            await websocket.send_text(error_chunk.model_dump_json())
+            await websocket.close(code=1011) # Internal Error
+        except:
+            pass
 
 async def run_generation_task(req: GenerateSingleRequest):
     """Background task to run video generation."""

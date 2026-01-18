@@ -1,8 +1,9 @@
-from typing import Dict, Any
+from typing import Dict, Any, Generator
 from google import genai
 from google.genai import types
 from ..core.interfaces import IDirector
 from ..core.models import VideoPlan
+from ..core.stream_models import StreamChunk, StreamChunkType
 from ..config import Config
 from ..utils.prompt_loader import PromptLoader
 from ..utils.logger import setup_logger, save_state
@@ -174,4 +175,55 @@ class DirectorService(IDirector):
             }, logger)
             
             print(f"❌ Error generating plan: {e}")
+            raise
+
+    def generate_plan_stream(self, user_input: str) -> Generator[StreamChunk, None, None]:
+        """Generates a plan while streaming thoughts and text chunks."""
+        logger.info(f"generate_plan_stream called with input length: {len(user_input)} chars")
+
+        gen_config_args = self._build_generation_config()
+        self._log_and_save_config(gen_config_args, len(user_input))
+
+        config = types.GenerateContentConfig(**gen_config_args)
+
+        full_text = ""
+
+        try:
+            logger.info("Calling Gemini API for streaming plan generation...")
+            response = self.client.models.generate_content_stream(
+                model=Config.MODEL_NAME_TEXT,
+                contents=user_input,
+                config=config,
+            )
+
+            for chunk in response:
+                # Handle thoughts if available (Gemini 2.5/3.0)
+                # Note: The SDK structure for thoughts might vary, checking candidates
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    for candidate in chunk.candidates:
+                         # Depending on SDK version, thought parts might be mixed in content parts
+                        if hasattr(candidate, 'content') and candidate.content and candidate.content.parts:
+                            for part in candidate.content.parts:
+                                if hasattr(part, 'thought') and part.thought:
+                                    yield StreamChunk(type=StreamChunkType.THOUGHT, content=part.thought)
+                                if hasattr(part, 'text') and part.text:
+                                    full_text += part.text
+                                    yield StreamChunk(type=StreamChunkType.TEXT, content=part.text)
+                # Fallback for older SDK or different structure
+                elif hasattr(chunk, 'text') and chunk.text:
+                    full_text += chunk.text
+                    yield StreamChunk(type=StreamChunkType.TEXT, content=chunk.text)
+
+            # Once stream is complete, parse the full text
+            logger.info("Stream complete. Parsing full response...")
+            plan = self._parse_and_save_plan(full_text)
+
+            yield StreamChunk(
+                type=StreamChunkType.PLAN,
+                data=plan.model_dump()
+            )
+
+        except Exception as e:
+            logger.error(f"Error during streaming plan generation: {e}", exc_info=True)
+            yield StreamChunk(type=StreamChunkType.ERROR, content=str(e))
             raise

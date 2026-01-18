@@ -1,9 +1,10 @@
 import os
+from typing import List, Tuple, TYPE_CHECKING
 from openpyxl import Workbook
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-from openpyxl.utils import get_column_letter
-from dance_loop_gen.core.report_models import ReportData
+from openpyxl.worksheet.worksheet import Worksheet
+from dance_loop_gen.core.report_models import ReportData, ReportRow
 from dance_loop_gen.utils.logger import setup_logger
 
 logger = setup_logger()
@@ -11,127 +12,105 @@ logger = setup_logger()
 class ReportService:
     """Service for generating Excel reports with embedded visuals."""
 
+    # Constants for layout
+    HEADER_ROW = 4
+    ROW_HEIGHT = 130
+    TARGET_IMG_HEIGHT = 160
+
+    # Styles
+    _THIN_BORDER = Border(left=Side(style='thin'), right=Side(style='thin'),
+                          top=Side(style='thin'), bottom=Side(style='thin'))
+    _CENTER_ALIGN = Alignment(horizontal="center", vertical="center")
+    _WRAP_ALIGN = Alignment(wrap_text=True, vertical="center")
+
     def generate_report(self, data: ReportData, output_path: str) -> str:
-        """
-        Generates an Excel report from ReportData.
-
-        Args:
-            data: The populated ReportData object.
-            output_path: The file path where the Excel file should be saved.
-
-        Returns:
-            The output_path.
-        """
+        """Generates an Excel report from ReportData."""
         logger.info(f"Generating Excel report for: {data.title}")
         wb = Workbook()
         ws = wb.active
         ws.title = "Production Schedule"
 
-        # Metadata Header
-        ws.merge_cells('A1:G1')
-        title_cell = ws['A1']
-        title_cell.value = f"VIDEO PLAN: {data.title.upper()}"
-        title_cell.font = Font(size=14, bold=True, color="FFFFFF")
-        title_cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
-        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        self._write_title(ws, data.title)
+        self._write_metadata(ws, data)
+        self._setup_table_headers(ws)
+        self._write_data_rows(ws, data.rows)
 
-        ws.merge_cells('A2:G2')
-        meta_cell = ws['A2']
-        meta_cell.value = f"Run ID: {data.run_id} | Generated: {data.generated_at}"
-        meta_cell.font = Font(italic=True, color="555555")
-        meta_cell.alignment = Alignment(horizontal="center", vertical="center")
-
-        # Table Headers
-        headers = ["Scene", "Keyframe", "Action", "Audio", "Start Pose", "End Pose", "Notes"]
-        header_row = 4
-
-        # Style headers
-        header_font = Font(bold=True, color="FFFFFF")
-        header_fill = PatternFill(start_color="36454F", end_color="36454F", fill_type="solid")
-        thin_border = Border(left=Side(style='thin'), right=Side(style='thin'),
-                             top=Side(style='thin'), bottom=Side(style='thin'))
-
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=header_row, column=col_num, value=header)
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = Alignment(horizontal="center", vertical="center")
-            cell.border = thin_border
-
-        # Set column widths
-        ws.column_dimensions['A'].width = 8   # Scene
-        ws.column_dimensions['B'].width = 25  # Keyframe
-        ws.column_dimensions['C'].width = 40  # Action
-        ws.column_dimensions['D'].width = 25  # Audio
-        ws.column_dimensions['E'].width = 25  # Start
-        ws.column_dimensions['F'].width = 25  # End
-        ws.column_dimensions['G'].width = 20  # Notes
-
-        row_height = 130 # Height for image rows
-
-        for i, row_data in enumerate(data.rows, start=header_row + 1):
-            ws.row_dimensions[i].height = row_height
-
-            # Scene Number
-            c1 = ws.cell(row=i, column=1, value=row_data.scene_number)
-            c1.alignment = Alignment(horizontal="center", vertical="center")
-            c1.font = Font(bold=True, size=12)
-            c1.border = thin_border
-
-            # Keyframe Image
-            c2 = ws.cell(row=i, column=2)
-            c2.border = thin_border
-            if row_data.keyframe_path and os.path.exists(row_data.keyframe_path):
-                try:
-                    img = XLImage(row_data.keyframe_path)
-
-                    # Target height in pixels (approx)
-                    target_height = 160
-
-                    # Calculate scaling to fit
-                    scale_h = target_height / img.height
-
-                    new_height = target_height
-                    new_width = int(img.width * scale_h)
-
-                    img.height = new_height
-                    img.width = new_width
-
-                    # Center in cell B (approximate by adding margin)
-                    # OpenPyXL places top-left.
-
-                    cell_addr = f"B{i}"
-                    ws.add_image(img, cell_addr)
-                except Exception as e:
-                    logger.error(f"Failed to add image {row_data.keyframe_path}: {e}")
-                    c2.value = "[Image Error]"
-                    c2.alignment = Alignment(horizontal="center", vertical="center")
-            else:
-                c2.value = "[No Image]"
-                c2.alignment = Alignment(horizontal="center", vertical="center")
-
-            # Text Columns
-            c3 = ws.cell(row=i, column=3, value=row_data.action_description)
-            c3.alignment = Alignment(wrap_text=True, vertical="center")
-            c3.border = thin_border
-
-            c4 = ws.cell(row=i, column=4, value=row_data.audio_prompt)
-            c4.alignment = Alignment(wrap_text=True, vertical="center")
-            c4.border = thin_border
-
-            c5 = ws.cell(row=i, column=5, value=row_data.start_pose)
-            c5.alignment = Alignment(wrap_text=True, vertical="center")
-            c5.border = thin_border
-
-            c6 = ws.cell(row=i, column=6, value=row_data.end_pose)
-            c6.alignment = Alignment(wrap_text=True, vertical="center")
-            c6.border = thin_border
-
-            c7 = ws.cell(row=i, column=7, value=row_data.notes)
-            c7.alignment = Alignment(wrap_text=True, vertical="center")
-            c7.border = thin_border
-
-        # Save
         wb.save(output_path)
         logger.info(f"Report saved to: {output_path}")
         return output_path
+
+    def _write_title(self, ws: Worksheet, title: str) -> None:
+        ws.merge_cells('A1:G1')
+        cell = ws['A1']
+        cell.value = f"VIDEO PLAN: {title.upper()}"
+        cell.font = Font(size=14, bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        cell.alignment = self._CENTER_ALIGN
+
+    def _write_metadata(self, ws: Worksheet, data: ReportData) -> None:
+        ws.merge_cells('A2:G2')
+        cell = ws['A2']
+        cell.value = f"Run ID: {data.run_id} | Generated: {data.generated_at}"
+        cell.font = Font(italic=True, color="555555")
+        cell.alignment = self._CENTER_ALIGN
+
+    def _setup_table_headers(self, ws: Worksheet) -> None:
+        headers = [
+            ("Scene", 8), ("Keyframe", 25), ("Action", 40),
+            ("Audio", 25), ("Start Pose", 25), ("End Pose", 25), ("Notes", 20)
+        ]
+
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="36454F", end_color="36454F", fill_type="solid")
+
+        for col_num, (text, width) in enumerate(headers, 1):
+            cell = ws.cell(row=self.HEADER_ROW, column=col_num, value=text)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = self._CENTER_ALIGN
+            cell.border = self._THIN_BORDER
+            ws.column_dimensions[chr(64 + col_num)].width = width
+
+    def _write_data_rows(self, ws: Worksheet, rows: List[ReportRow]) -> None:
+        for i, row_data in enumerate(rows, start=self.HEADER_ROW + 1):
+            ws.row_dimensions[i].height = self.ROW_HEIGHT
+            self._write_single_row(ws, i, row_data)
+
+    def _write_single_row(self, ws: Worksheet, row_idx: int, data: ReportRow) -> None:
+        # Scene Number
+        c1 = ws.cell(row=row_idx, column=1, value=data.scene_number)
+        c1.alignment = self._CENTER_ALIGN
+        c1.font = Font(bold=True, size=12)
+        c1.border = self._THIN_BORDER
+
+        # Image
+        c2 = ws.cell(row=row_idx, column=2)
+        c2.border = self._THIN_BORDER
+        self._insert_image(ws, row_idx, data.keyframe_path, c2)
+
+        # Text Columns (3-7)
+        values = [data.action_description, data.audio_prompt,
+                  data.start_pose, data.end_pose, data.notes]
+
+        for col_offset, val in enumerate(values):
+            cell = ws.cell(row=row_idx, column=3 + col_offset, value=val)
+            cell.alignment = self._WRAP_ALIGN
+            cell.border = self._THIN_BORDER
+
+    def _insert_image(self, ws: Worksheet, row_idx: int, path: str, cell) -> None:
+        if not path or not os.path.exists(path):
+            cell.value = "[No Image]"
+            cell.alignment = self._CENTER_ALIGN
+            return
+
+        try:
+            img = XLImage(path)
+            scale = self.TARGET_IMG_HEIGHT / img.height
+            img.height = self.TARGET_IMG_HEIGHT
+            img.width = int(img.width * scale)
+
+            ws.add_image(img, f"B{row_idx}")
+        except Exception as e:
+            logger.error(f"Failed to add image {path}: {e}")
+            cell.value = "[Image Error]"
+            cell.alignment = self._CENTER_ALIGN

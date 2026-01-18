@@ -1,15 +1,54 @@
 import os
 import mimetypes
-from typing import Dict, Any, Optional, Tuple
+from pathlib import Path
+from typing import Dict, Any, Optional, Tuple, List
 
 class PromptLoader:
     @staticmethod
+    def _validate_path(path_str: str) -> Path:
+        """
+        Validates that the path resolves to a location inside Config.PROMPTS_DIR.
+        Prevents Path Traversal attacks.
+
+        Args:
+            path_str: The file path (relative or absolute).
+
+        Returns:
+            The resolved Path object if valid.
+
+        Raises:
+            ValueError: If the path is outside the allowed directory.
+        """
+        from config import Config
+        base_dir = Path(Config.PROMPTS_DIR).resolve()
+
+        path = Path(path_str)
+
+        # Handle absolute vs relative paths
+        if path.is_absolute():
+            full_path = path.resolve()
+        else:
+            # Join with base_dir if relative
+            full_path = (base_dir / path_str).resolve()
+
+        # Security check: Ensure the resolved path is within base_dir
+        # We check if base_dir is a parent of full_path, or if they are the same directory
+        if base_dir != full_path and base_dir not in full_path.parents:
+            raise ValueError(f"Security violation: Path {path_str} is outside the prompts directory.")
+
+        return full_path
+
+    @staticmethod
     def load(filename: str) -> str:
         """Loads a prompt text file from the configured prompts directory."""
-        from config import Config  # Lazy import to avoid circular dependency
         
-        path = os.path.join(Config.PROMPTS_DIR, filename)
-        if not os.path.exists(path):
+        try:
+            path = PromptLoader._validate_path(filename)
+        except ValueError as e:
+            # Log security event? For now, just raise to stop execution.
+            raise e
+
+        if not path.exists():
             raise FileNotFoundError(f"Prompt file not found: {path}")
             
         with open(path, "r", encoding="utf-8") as f:
@@ -23,42 +62,31 @@ class PromptLoader:
 
     @staticmethod
     def load_optional(filename: str) -> Optional[str]:
-        """Loads a prompt file, returning None if missing or empty.
-        
-        This is useful for optional configuration files like outfit descriptions
-        where the user may leave them blank to let the AI decide.
-        """
+        """Loads a prompt file, returning None if missing or empty."""
         try:
+            # We use load() which includes validation
             content = PromptLoader.load(filename)
             return content if content.strip() else None
-        except FileNotFoundError:
+        except (FileNotFoundError, ValueError):
+            # Return None on missing file OR security violation (fail safe for optional files)
             return None
 
     @staticmethod
     def load_optional_image(filename: str) -> Optional[Tuple[bytes, str]]:
-        """Loads an optional image file from the prompts directory.
-        
-        This is useful for optional reference images like pose references
-        where the user may leave them blank to let the AI decide.
-        
-        Args:
-            filename: Name of the image file (e.g., 'reference_pose.png')
-            
-        Returns:
-            Tuple of (image_bytes, mime_type) if file exists, None otherwise.
-        """
-        from config import Config  # Lazy import to avoid circular dependency
-        
-        path = os.path.join(Config.PROMPTS_DIR, filename)
+        """Loads an optional image file from the prompts directory."""
+        try:
+            path = PromptLoader._validate_path(filename)
+        except ValueError:
+            return None
         
         # Check for exact match first
-        if not os.path.exists(path):
+        if not path.exists():
             # If it's a generic request without extension, try common ones
-            base, ext = os.path.splitext(filename)
-            if not ext:
+            # We must validate these generated paths too, though they should be safe if filename was safe (only adding extension)
+            if not path.suffix:
                 for target_ext in [".png", ".jpg", ".jpeg"]:
-                    test_path = path + target_ext
-                    if os.path.exists(test_path):
+                    test_path = path.with_suffix(target_ext)
+                    if test_path.exists():
                         path = test_path
                         break
                 else:
@@ -85,24 +113,25 @@ class PromptLoader:
             
         Returns:
             List of tuples of (image_bytes, mime_type), sorted by filename.
-            Empty list if no matching files found or directory doesn't exist.
         """
-        if not os.path.exists(directory) or not os.path.isdir(directory):
+        try:
+            dir_path = PromptLoader._validate_path(directory)
+        except ValueError:
+            return []
+
+        if not dir_path.exists() or not dir_path.is_dir():
             return []
             
         matching_files = []
         for ext in [".png", ".jpg", ".jpeg", ".jpe", ".webp"]:
-            import glob
-            search_pattern = os.path.join(directory, f"*{ext}")
-            matching_files.extend(glob.glob(search_pattern))
-            # Also try uppercase extensions
-            search_pattern_upper = os.path.join(directory, f"*{ext.upper()}")
-            matching_files.extend(glob.glob(search_pattern_upper))
+            # Use pathlib glob
+            matching_files.extend(dir_path.glob(f"*{ext}"))
+            matching_files.extend(dir_path.glob(f"*{ext.upper()}"))
             
         if not matching_files:
             return []
             
-        # Sort to ensure consistent ordering
+        # Sort to ensure consistent ordering (Path objects sortable)
         matching_files.sort()
         
         images = []
@@ -125,38 +154,37 @@ class PromptLoader:
 
     @staticmethod
     def load_multiple_images(pattern: str) -> list:
+        """Loads multiple image files matching a pattern from the prompts directory."""
+        from config import Config
+        
+        # Security check on the pattern prefix
+        try:
+            # Check if pattern attempts traversal
+            PromptLoader._validate_path(pattern)
+        except ValueError:
+            return []
 
-        """Loads multiple image files matching a pattern from the prompts directory.
+        # Safe to proceed with globbing in PROMPTS_DIR
+        base_dir = Path(Config.PROMPTS_DIR)
         
-        This is useful for loading multiple reference poses (e.g., reference_pose_*.png)
-        where the user wants to iterate through different poses for batch processing.
-        
-        Args:
-            pattern: Pattern for the base filename (e.g., 'reference_pose')
-                    Will search for files like 'reference_pose_1.png', 'reference_pose_2.png', etc.
-            
-        Returns:
-            List of tuples of (image_bytes, mime_type), sorted by filename.
-            Empty list if no matching files found.
-        """
-        from config import Config  # Lazy import to avoid circular dependency
-        import glob
-        
-        # Build search pattern for numbered files
         matching_files = []
         for ext in ["png", "jpg", "jpeg", "jpe"]:
-            search_pattern = os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
-            matching_files.extend(glob.glob(search_pattern))
+             # Glob supports recursive ** but we only want flat list?
+             # Original code: os.path.join(Config.PROMPTS_DIR, f"{pattern}_*.{ext}")
+             # This means it searches for files starting with pattern_ in PROMPTS_DIR.
+             # If pattern contains slashes, it searches in subdirs.
+
+             # Use glob on the base_dir
+             search_pattern = f"{pattern}_*.{ext}"
+             matching_files.extend(base_dir.glob(search_pattern))
         
         if not matching_files:
             return []
         
-        # Sort to ensure consistent ordering (1, 2, 3, ...)
         matching_files.sort()
         
         images = []
         for path in matching_files:
-            # Determine MIME type
             mime_type, _ = mimetypes.guess_type(path)
             if not mime_type or not mime_type.startswith('image/'):
                 continue
@@ -171,5 +199,3 @@ class PromptLoader:
                 continue
                 
         return images
-
-
